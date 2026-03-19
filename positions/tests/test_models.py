@@ -1,4 +1,5 @@
 import pytest
+from django.db import IntegrityError
 from positions.models import Position, Tag
 
 @pytest.mark.django_db
@@ -33,7 +34,7 @@ def test_position_tags_many_to_many():
 @pytest.mark.django_db
 def test_tag_uniqueness():
     Tag.objects.create(name='endgame')
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         Tag.objects.create(name='endgame')
 
 @pytest.mark.django_db
