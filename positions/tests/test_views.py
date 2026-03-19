@@ -143,6 +143,18 @@ def test_delete_position_not_found(client):
     assert r.status_code == 404
 
 
+@pytest.mark.django_db
+def test_list_positions_newest_first(client):
+    import time
+    p1 = Position.objects.create(name='Older', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+    time.sleep(0.01)
+    p2 = Position.objects.create(name='Newer', fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
+    r = client.get('/api/positions/')
+    data = json.loads(r.content)
+    assert data[0]['name'] == 'Newer'
+    assert data[1]['name'] == 'Older'
+
+
 # --- GET /api/tags/ ---
 
 @pytest.mark.django_db
