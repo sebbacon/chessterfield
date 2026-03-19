@@ -36,6 +36,10 @@ test-backend:
 test-frontend:
     cd frontend && npm test
 
+# Run end-to-end smoke tests against a real server (run `just build` first)
+smoke:
+    cd frontend && PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
+
 # Build frontend for production
 build:
     cd frontend && npm run build

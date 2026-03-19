@@ -84,7 +84,7 @@ describe('Play view game loop', () => {
     const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
     expect(sentCmds).toContain('stop')
     expect(sentCmds.some(c => c.startsWith('position fen'))).toBe(true)
-    expect(sentCmds).toContain('go depth 20')
+    expect(sentCmds).toContain('go movetime 3000')
   })
 
   it('applies engine bestmove to the board after user move', async () => {

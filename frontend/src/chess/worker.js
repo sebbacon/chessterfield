@@ -24,7 +24,7 @@ async function init() {
       }
       self.postMessage({ type: 'output', line })
     })
-    engine.postMessage('uci')
+    engine.onCustomMessage('uci')
   } catch (err) {
     self.postMessage({ type: 'error', message: err.message })
   }
@@ -33,7 +33,7 @@ async function init() {
 self.onmessage = (e) => {
   const { type, cmd } = e.data
   if (type === 'cmd' && engine) {
-    engine.postMessage(cmd)
+    engine.onCustomMessage(cmd)
   }
 }
 

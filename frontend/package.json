@@ -13,6 +13,7 @@
     "stockfish": "^16.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "jsdom": "^27.0.1",
     "vite": "^5.0.0",
     "vitest": "^1.0.0"

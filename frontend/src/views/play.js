@@ -229,7 +229,7 @@ export async function mountPlay(app, navigate, positionId) {
     // After engine moves, it's user's turn — start eval for user's position
     if (workerReady) {
       sendToEngine(`position fen ${chess.fen()}`)
-      sendToEngine('go depth 20')
+      sendToEngine('go movetime 3000')
     }
   }
 
@@ -266,7 +266,7 @@ export async function mountPlay(app, navigate, positionId) {
             if (workerReady) {
               sendToEngine('stop')
               sendToEngine(`position fen ${chess.fen()}`)
-              sendToEngine('go depth 20')
+              sendToEngine('go movetime 3000')
             }
           },
         },
@@ -280,7 +280,7 @@ export async function mountPlay(app, navigate, positionId) {
   function engineGoFirst() {
     if (workerReady) {
       sendToEngine(`position fen ${chess.fen()}`)
-      sendToEngine('go depth 20')
+      sendToEngine('go movetime 3000')
     } else if (worker) {
       // Worker not ready yet — wait for ready message then trigger
       const originalHandler = worker.onmessage
@@ -288,7 +288,7 @@ export async function mountPlay(app, navigate, positionId) {
         originalHandler(e)
         if (e.data.type === 'ready') {
           sendToEngine(`position fen ${chess.fen()}`)
-          sendToEngine('go depth 20')
+          sendToEngine('go movetime 3000')
           worker.onmessage = originalHandler
         }
       }
