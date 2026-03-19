@@ -9,6 +9,8 @@
 //   { type: 'ready' }
 //   { type: 'error', message: '<error string>' }
 
+import wasmUrl from 'stockfish/src/stockfish-nnue-16-single.wasm?url'
+
 let engine = null
 
 async function init() {
@@ -16,7 +18,7 @@ async function init() {
     // stockfish npm package: import the factory function
     // The package provides a WASM-backed engine via an emscripten module
     const { default: Stockfish } = await import('stockfish/src/stockfish-nnue-16-single.js')
-    engine = await Stockfish()
+    engine = await Stockfish({ locateFile: () => wasmUrl })
     engine.addMessageListener((line) => {
       if (line === 'uciok') {
         self.postMessage({ type: 'ready' })
