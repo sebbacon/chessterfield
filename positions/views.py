@@ -75,7 +75,7 @@ def positions_detail(request, pk):
 
     # DELETE
     pos.delete()
-    return HttpResponse(status=204)
+    return HttpResponse(status=204, content_type='application/json')
 
 
 @require_http_methods(['GET'])
