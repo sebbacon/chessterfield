@@ -14,18 +14,22 @@ function navigate(view, positionId = null) {
 }
 
 function render() {
+  let p
   switch (state.view) {
     case 'library':
-      mountLibrary(app, navigate)
+      p = mountLibrary(app, navigate)
       break
     case 'import':
-      mountImport(app, navigate)
+      p = mountImport(app, navigate)
       break
     case 'play':
-      mountPlay(app, navigate, state.positionId)
+      p = mountPlay(app, navigate, state.positionId)
       break
     default:
-      mountLibrary(app, navigate)
+      p = mountLibrary(app, navigate)
+  }
+  if (p && typeof p.catch === 'function') {
+    p.catch(err => console.error('View mount failed:', err))
   }
 }
 

@@ -21,10 +21,12 @@ export async function mountLibrary(app, navigate) {
 
   let allTags = []
   let selectedTags = new Set()
+  let positionRequestSeq = 0
 
   async function loadTags() {
     try {
       const r = await fetch('/api/tags/')
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       allTags = await r.json()
       renderTags()
     } catch {
@@ -55,16 +57,18 @@ export async function mountLibrary(app, navigate) {
   }
 
   async function loadPositions() {
+    const seq = ++positionRequestSeq
     const grid = app.querySelector('#position-grid')
     grid.innerHTML = '<p>Loading...</p>'
     try {
       const params = [...selectedTags].map(t => `tag=${encodeURIComponent(t)}`).join('&')
       const url = '/api/positions/' + (params ? `?${params}` : '')
       const r = await fetch(url)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const positions = await r.json()
-      renderPositions(positions)
+      if (seq === positionRequestSeq) renderPositions(positions)
     } catch {
-      showToast('Failed to load positions')
+      if (seq === positionRequestSeq) showToast('Failed to load positions')
     }
   }
 
@@ -94,7 +98,7 @@ export async function mountLibrary(app, navigate) {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function showToast(msg) {
