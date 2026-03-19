@@ -103,7 +103,14 @@ export async function mountPlay(app, navigate, positionId) {
 
   function handleWorkerMessage(e) {
     const { type, line } = e.data
-    if (type === 'ready') { workerReady = true; return }
+    if (type === 'ready') {
+      workerReady = true
+      // Enable the board now that the engine is ready (if it's the user's turn)
+      if (cg && isUserTurn() && !gameOver) {
+        cg.set({ movable: { color: userColor, dests: toDests(chess) } })
+      }
+      return
+    }
     if (type === 'error') { app.querySelector('#engine-banner').classList.remove('hidden'); return }
     if (type !== 'output') return
 
@@ -238,7 +245,7 @@ export async function mountPlay(app, navigate, positionId) {
       movable: {
         free: false,
         color: userColor,
-        dests: isUserTurn() ? toDests(chess) : new Map(),
+        dests: (isUserTurn() && workerReady) ? toDests(chess) : new Map(),
         events: {
           after(orig, dest) {
             // Promotion: always promote to queen for simplicity
