@@ -5,6 +5,7 @@
  */
 export function parseStockfishLine(line) {
   if (!line.startsWith('info')) return null
+  if (line.includes(' lowerbound') || line.includes(' upperbound')) return null
 
   const depthMatch = line.match(/\bdepth\s+(\d+)/)
   const cpMatch = line.match(/\bscore\s+cp\s+(-?\d+)/)

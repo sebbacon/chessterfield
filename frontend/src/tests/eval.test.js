@@ -30,6 +30,11 @@ describe('parseStockfishLine', () => {
   it('returns null for info lines without score', () => {
     expect(parseStockfishLine('info depth 1 nodes 100')).toBeNull()
   })
+
+  it('returns null for lowerbound/upperbound aspiration window lines', () => {
+    expect(parseStockfishLine('info depth 15 score cp 45 lowerbound nodes 1000')).toBeNull()
+    expect(parseStockfishLine('info depth 15 score cp 45 upperbound nodes 1000')).toBeNull()
+  })
 })
 
 describe('cpToPercent', () => {
