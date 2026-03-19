@@ -121,7 +121,7 @@ export async function mountImport(app, navigate) {
     try {
       const r = await fetch('/api/positions/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
         body: JSON.stringify({
           name,
           fen,
@@ -135,6 +135,10 @@ export async function mountImport(app, navigate) {
       showToast('Failed to save position')
     }
   })
+}
+
+function getCsrfToken() {
+  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] ?? ''
 }
 
 function escapeHtml(str) {

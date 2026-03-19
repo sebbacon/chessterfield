@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -125,7 +126,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DJANGO_VITE = {
     'default': {
-        'dev_mode': True,           # Set False for production (after npm run build)
+        'dev_mode': os.environ.get('DJANGO_VITE_DEV_MODE', 'true').lower() == 'true',
         'dev_server_port': 5173,
         'manifest_path': BASE_DIR / 'frontend' / 'dist' / '.vite' / 'manifest.json',
     }

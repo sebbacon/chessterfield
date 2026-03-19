@@ -18,12 +18,13 @@ async function init() {
     const { default: Stockfish } = await import('stockfish/src/stockfish-nnue-16-single.js')
     engine = await Stockfish()
     engine.addMessageListener((line) => {
+      if (line === 'uciok') {
+        self.postMessage({ type: 'ready' })
+        return
+      }
       self.postMessage({ type: 'output', line })
     })
     engine.postMessage('uci')
-    // Wait for uciok then signal ready
-    // (uciok arrives via the message listener above; caller can watch for 'uciok' in output)
-    self.postMessage({ type: 'ready' })
   } catch (err) {
     self.postMessage({ type: 'error', message: err.message })
   }

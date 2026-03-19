@@ -1,6 +1,5 @@
 import json
 from django.http import HttpResponse, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from .models import Position, Tag
 
@@ -22,7 +21,6 @@ def _apply_tags(position, tag_names):
     position.tags.set(tags)
 
 
-@csrf_exempt
 @require_http_methods(['GET', 'POST'])
 def positions_list(request):
     if request.method == 'GET':
@@ -48,7 +46,6 @@ def positions_list(request):
     return JsonResponse(_position_to_dict(pos), status=201)
 
 
-@csrf_exempt
 @require_http_methods(['GET', 'PATCH', 'DELETE'])
 def positions_detail(request, pk):
     try:

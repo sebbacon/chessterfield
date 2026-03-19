@@ -160,7 +160,11 @@ export async function mountPlay(app, navigate, positionId) {
 
   // --- Game-end detection ---
   function checkGameEnd() {
-    if (chess.isCheckmate()) return chess.turn() === 'w' ? 'Checkmate — Engine wins' : 'Checkmate — You win!'
+    if (chess.isCheckmate()) {
+      const matedSide = chess.turn() // 'w' or 'b'
+      const userMated = (matedSide === 'w' && userColor === 'white') || (matedSide === 'b' && userColor === 'black')
+      return userMated ? 'Checkmate — Engine wins' : 'Checkmate — You win!'
+    }
     if (chess.isStalemate()) return 'Stalemate — Draw'
     if (chess.isInsufficientMaterial()) return 'Insufficient Material — Draw'
     if (chess.isThreefoldRepetition()) return 'Threefold Repetition — Draw'
