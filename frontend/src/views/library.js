@@ -40,8 +40,8 @@ export async function mountLibrary(app, navigate) {
     }
     container.innerHTML = allTags.map(t => `
       <label class="tag-filter ${selectedTags.has(t.name) ? 'active' : ''}">
-        <input type="checkbox" value="${t.name}" ${selectedTags.has(t.name) ? 'checked' : ''}>
-        ${t.name}
+        <input type="checkbox" value="${escapeHtml(t.name)}" ${selectedTags.has(t.name) ? 'checked' : ''}>
+        ${escapeHtml(t.name)}
       </label>
     `).join('')
 
