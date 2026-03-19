@@ -198,7 +198,8 @@ export async function mountPlay(app, navigate, positionId) {
     const to = uciMove.slice(2, 4)
     const promotion = uciMove[4] ?? undefined
 
-    chess.move({ from, to, promotion })
+    const move = chess.move({ from, to, promotion })
+    if (!move) return
     updateMoveHistory()
 
     cg.set({
@@ -298,14 +299,14 @@ export async function mountPlay(app, navigate, positionId) {
     if (!gameOver) showResult('You resigned — Engine wins')
   })
 
-  app.querySelector('#back-btn').addEventListener('click', () => navigate('library'))
+  app.querySelector('#back-btn').addEventListener('click', () => { if (worker) worker.terminate(); navigate('library') })
 
   // --- Result overlay buttons ---
   app.querySelector('#play-again-btn').addEventListener('click', () => {
     app.querySelector('#result-overlay').classList.add('hidden')
     startGame()
   })
-  app.querySelector('#back-to-library-btn').addEventListener('click', () => navigate('library'))
+  app.querySelector('#back-to-library-btn').addEventListener('click', () => { if (worker) worker.terminate(); navigate('library') })
 
   // --- Start / restart game ---
   function startGame() {
@@ -321,6 +322,7 @@ export async function mountPlay(app, navigate, positionId) {
     if (cg) cg.destroy()
     initBoard()
 
+    sendToEngine('stop')
     sendToEngine('ucinewgame')
 
     const fenTurn = chess.turn() // 'w' or 'b'
