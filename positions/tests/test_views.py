@@ -1,0 +1,153 @@
+import json
+import pytest
+from django.test import Client
+from positions.models import Position, Tag
+
+
+@pytest.fixture
+def client():
+    return Client()
+
+
+@pytest.fixture
+def position(db):
+    return Position.objects.create(
+        name='Starting Position',
+        fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        notes='The beginning.',
+    )
+
+
+@pytest.fixture
+def tag(db):
+    return Tag.objects.create(name='opening')
+
+
+# --- GET /api/positions/ ---
+
+@pytest.mark.django_db
+def test_list_positions_empty(client):
+    r = client.get('/api/positions/')
+    assert r.status_code == 200
+    assert json.loads(r.content) == []
+
+
+@pytest.mark.django_db
+def test_list_positions_returns_positions(client, position):
+    r = client.get('/api/positions/')
+    data = json.loads(r.content)
+    assert len(data) == 1
+    assert data[0]['name'] == 'Starting Position'
+    assert data[0]['fen'] == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+    assert data[0]['tags'] == []
+
+
+@pytest.mark.django_db
+def test_list_positions_tag_filter_or_logic(client):
+    t1 = Tag.objects.create(name='opening')
+    t2 = Tag.objects.create(name='endgame')
+    t3 = Tag.objects.create(name='tactics')
+    p1 = Position.objects.create(name='P1', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+    p2 = Position.objects.create(name='P2', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+    p3 = Position.objects.create(name='P3', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+    p1.tags.add(t1)
+    p2.tags.add(t2)
+    p3.tags.add(t3)
+    r = client.get('/api/positions/?tag=opening&tag=endgame')
+    data = json.loads(r.content)
+    names = {d['name'] for d in data}
+    assert names == {'P1', 'P2'}
+
+
+# --- POST /api/positions/ ---
+
+@pytest.mark.django_db
+def test_create_position(client):
+    payload = {
+        'name': 'Sicilian',
+        'fen': 'rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        'notes': '',
+        'tags': ['sicilian', 'opening'],
+    }
+    r = client.post('/api/positions/', json.dumps(payload), content_type='application/json')
+    assert r.status_code == 201
+    data = json.loads(r.content)
+    assert data['name'] == 'Sicilian'
+    assert set(data['tags']) == {'sicilian', 'opening'}
+    assert Tag.objects.filter(name='sicilian').exists()
+    assert Tag.objects.filter(name='opening').exists()
+
+
+@pytest.mark.django_db
+def test_create_position_reuses_existing_tags(client):
+    Tag.objects.create(name='sicilian')
+    payload = {'name': 'P', 'fen': 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'notes': '', 'tags': ['sicilian']}
+    client.post('/api/positions/', json.dumps(payload), content_type='application/json')
+    assert Tag.objects.filter(name='sicilian').count() == 1
+
+
+@pytest.mark.django_db
+def test_create_position_missing_name_returns_400(client):
+    payload = {'fen': 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', 'tags': []}
+    r = client.post('/api/positions/', json.dumps(payload), content_type='application/json')
+    assert r.status_code == 400
+
+
+# --- GET /api/positions/<id>/ ---
+
+@pytest.mark.django_db
+def test_get_position(client, position):
+    r = client.get(f'/api/positions/{position.id}/')
+    assert r.status_code == 200
+    data = json.loads(r.content)
+    assert data['id'] == position.id
+    assert data['name'] == 'Starting Position'
+
+
+@pytest.mark.django_db
+def test_get_position_not_found(client):
+    r = client.get('/api/positions/9999/')
+    assert r.status_code == 404
+
+
+# --- PATCH /api/positions/<id>/ ---
+
+@pytest.mark.django_db
+def test_patch_position_name(client, position):
+    r = client.patch(f'/api/positions/{position.id}/', json.dumps({'name': 'Renamed'}), content_type='application/json')
+    assert r.status_code == 200
+    position.refresh_from_db()
+    assert position.name == 'Renamed'
+
+
+@pytest.mark.django_db
+def test_patch_position_tags_replaces_set(client, position, tag):
+    position.tags.add(tag)
+    r = client.patch(f'/api/positions/{position.id}/', json.dumps({'tags': ['endgame']}), content_type='application/json')
+    assert r.status_code == 200
+    assert list(position.tags.values_list('name', flat=True)) == ['endgame']
+
+
+# --- DELETE /api/positions/<id>/ ---
+
+@pytest.mark.django_db
+def test_delete_position(client, position):
+    r = client.delete(f'/api/positions/{position.id}/')
+    assert r.status_code == 204
+    assert not Position.objects.filter(id=position.id).exists()
+
+
+@pytest.mark.django_db
+def test_delete_position_not_found(client):
+    r = client.delete('/api/positions/9999/')
+    assert r.status_code == 404
+
+
+# --- GET /api/tags/ ---
+
+@pytest.mark.django_db
+def test_list_tags(client, tag):
+    r = client.get('/api/tags/')
+    assert r.status_code == 200
+    data = json.loads(r.content)
+    assert any(t['name'] == 'opening' for t in data)
