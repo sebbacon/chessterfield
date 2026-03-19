@@ -114,7 +114,7 @@ export async function mountImport(app, navigate) {
     const nameError = app.querySelector('#name-error')
 
     let valid = true
-    if (!fen || !validateFen(fen)) valid = false
+    if (!fen) { fenError.textContent = 'FEN is required'; valid = false } else if (!validateFen(fen)) { valid = false }
     if (!name) { nameError.textContent = 'Name is required'; valid = false } else { nameError.textContent = '' }
     if (!valid) return
 
@@ -138,7 +138,7 @@ export async function mountImport(app, navigate) {
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function showToast(msg) {
