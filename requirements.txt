@@ -1,0 +1,4 @@
+django>=4.2,<5.0
+django-vite>=3.0
+pytest>=8.0
+pytest-django>=4.8
