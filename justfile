@@ -39,3 +39,4 @@ test-frontend:
 # Build frontend for production
 build:
     cd frontend && npm run build
+    cp frontend/node_modules/stockfish/src/stockfish-nnue-16-single.wasm frontend/dist/assets/
