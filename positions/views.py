@@ -145,6 +145,16 @@ def games_list(request):
 
 
 @require_http_methods(['GET'])
+def games_detail(request, pk):
+    try:
+        game = Game.objects.get(pk=pk)
+    except Game.DoesNotExist:
+        return JsonResponse({'error': 'Not found'}, status=404)
+
+    return JsonResponse(_game_to_dict(game))
+
+
+@require_http_methods(['GET'])
 def tags_list(request):
     tags = Tag.objects.all().values('id', 'name')
     return JsonResponse(list(tags), safe=False)

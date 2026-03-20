@@ -162,6 +162,7 @@ export async function mountLibrary(app, navigate) {
           <p class="game-meta">Played as ${escapeHtml(capitalize(game.user_color))}</p>
           <p class="game-meta">${escapeHtml(game.winner_label)}</p>
         </div>
+        <button class="btn-secondary open-game-btn" data-id="${game.id}">Open at End</button>
       </div>
     `
   }
@@ -169,6 +170,12 @@ export async function mountLibrary(app, navigate) {
   function bindPlayButtons(container) {
     container.querySelectorAll('.play-btn').forEach(btn => {
       btn.addEventListener('click', () => navigate('play', parseInt(btn.dataset.id)))
+    })
+  }
+
+  function bindOpenGameButtons(container) {
+    container.querySelectorAll('.open-game-btn').forEach(btn => {
+      btn.addEventListener('click', () => navigate('play', `game:${btn.dataset.id}`))
     })
   }
 
@@ -190,6 +197,7 @@ export async function mountLibrary(app, navigate) {
       return
     }
     grid.innerHTML = games.map(gameCardHtml).join('') + loadMoreHtml()
+    bindOpenGameButtons(grid)
     bindLoadMore(grid)
   }
 
@@ -203,6 +211,7 @@ export async function mountLibrary(app, navigate) {
     while (wrapper.firstChild) frag.appendChild(wrapper.firstChild)
     grid.appendChild(frag)
     bindPlayButtons(grid)
+    bindOpenGameButtons(grid)
     bindLoadMore(grid)
   }
 

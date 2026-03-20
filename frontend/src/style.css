@@ -186,6 +186,7 @@ body {
 .btn-secondary:hover { background: #1a5276; }
 
 .play-btn { margin: 0.5rem; }
+.open-game-btn { margin: 0.5rem; }
 .muted { color: #666; font-size: 0.9rem; padding: 1rem 0; }
 .load-more-row { grid-column: 1 / -1; }
 

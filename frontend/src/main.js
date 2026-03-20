@@ -5,11 +5,11 @@ import { mountPlay } from './views/play.js'
 
 const app = document.getElementById('app')
 
-// State: { view: 'library'|'import'|'play', positionId: number|null }
-let state = { view: 'library', positionId: null }
+// State: { view: 'library'|'import'|'play', itemId: number|string|null }
+let state = { view: 'library', itemId: null }
 
-function navigate(view, positionId = null) {
-  state = { view, positionId }
+function navigate(view, itemId = null) {
+  state = { view, itemId }
   render()
 }
 
@@ -23,7 +23,7 @@ function render() {
       p = mountImport(app, navigate)
       break
     case 'play':
-      p = mountPlay(app, navigate, state.positionId)
+      p = mountPlay(app, navigate, state.itemId)
       break
     default:
       p = mountLibrary(app, navigate)

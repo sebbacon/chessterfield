@@ -116,4 +116,25 @@ describe('Play view game loop', () => {
     const lastSet = cgMockInstance.set.mock.calls.at(-1)?.[0]
     expect(lastSet?.movable?.dests).not.toEqual(new Map())
   })
+
+  it('can open a game at its final position', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 2,
+          name: 'vs opponent (2026-03-20)',
+          fen: STARTING_FEN,
+          user_color: 'white',
+          result_label: 'You won',
+        }),
+      })
+    ))
+
+    await mountPlay(app, navigate, 'game:2')
+
+    expect(fetch).toHaveBeenCalledWith('/api/games/2/')
+    expect(app.textContent).toContain('vs opponent (2026-03-20) — Final Position')
+    expect(app.textContent).toContain('You won')
+  })
 })

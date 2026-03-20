@@ -7,15 +7,19 @@ import 'chessground/assets/chessground.base.css'
 import 'chessground/assets/chessground.brown.css'
 import 'chessground/assets/chessground.cburnett.css'
 
-export async function mountPlay(app, navigate, positionId) {
-  // --- Fetch position data ---
+export async function mountPlay(app, navigate, itemId) {
+  // --- Fetch position or game-end data ---
   let position
+  const isGame = typeof itemId === 'string' && itemId.startsWith('game:')
+  const resourceId = isGame ? itemId.slice(5) : itemId
+  const resourceUrl = isGame ? `/api/games/${resourceId}/` : `/api/positions/${resourceId}/`
   try {
-    const r = await fetch(`/api/positions/${positionId}/`)
+    const r = await fetch(resourceUrl)
     if (!r.ok) throw new Error('Not found')
-    position = await r.json()
+    const data = await r.json()
+    position = isGame ? gameToPlayablePosition(data) : data
   } catch {
-    app.innerHTML = '<p class="muted" style="padding:2rem">Position not found. <button id="back" class="btn-secondary">Back</button></p>'
+    app.innerHTML = `<p class="muted" style="padding:2rem">${isGame ? 'Game' : 'Position'} not found. <button id="back" class="btn-secondary">Back</button></p>`
     app.querySelector('#back').addEventListener('click', () => navigate('library'))
     return
   }
@@ -491,4 +495,15 @@ export async function mountPlay(app, navigate, positionId) {
 
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+
+function gameToPlayablePosition(game) {
+  return {
+    id: game.id,
+    name: `${game.name} — Final Position`,
+    fen: game.fen,
+    notes: '',
+    tags: ['game', game.user_color, game.result_label],
+  }
 }

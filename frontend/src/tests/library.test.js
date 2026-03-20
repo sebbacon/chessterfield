@@ -30,9 +30,11 @@ async function flush() {
 
 describe('Library view', () => {
   let app
+  let navigate
 
   beforeEach(() => {
     app = makeApp()
+    navigate = vi.fn()
     vi.stubGlobal('fetch', vi.fn((url) => {
       if (url === '/api/tags/') return makeResponse([])
       if (String(url).startsWith('/api/positions/')) {
@@ -71,7 +73,7 @@ describe('Library view', () => {
   })
 
   it('switches from positions to games', async () => {
-    await mountLibrary(app, vi.fn())
+    await mountLibrary(app, navigate)
     expect(app.querySelector('h1').textContent).toBe('Positions')
     expect(app.textContent).toContain('Starting Position')
 
@@ -81,5 +83,8 @@ describe('Library view', () => {
     expect(app.querySelector('h1').textContent).toBe('Games')
     expect(app.textContent).toContain('vs opponent (2026-03-20)')
     expect(app.textContent).toContain('You won')
+
+    app.querySelector('.open-game-btn').click()
+    expect(navigate).toHaveBeenCalledWith('play', 'game:2')
   })
 })

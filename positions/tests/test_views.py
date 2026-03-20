@@ -202,3 +202,13 @@ def test_list_games_returns_game_summaries(client, game):
     assert data['results'][0]['fen'] == 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2'
     assert data['results'][0]['result_label'] == 'You won'
     assert data['results'][0]['winner_label'] == 'White won'
+
+
+@pytest.mark.django_db
+def test_get_game_detail(client, game):
+    r = client.get(f'/api/games/{game.id}/')
+    assert r.status_code == 200
+    data = json.loads(r.content)
+    assert data['id'] == game.id
+    assert data['name'] == 'vs opponent (2026-03-20)'
+    assert data['result_label'] == 'You won'
