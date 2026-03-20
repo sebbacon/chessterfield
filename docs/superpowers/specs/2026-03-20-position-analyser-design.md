@@ -60,7 +60,11 @@ def analyse(board: chess.Board, num_lines: int = 5) -> EngineResult:
     """Run Stockfish and return top N lines with evals."""
 ```
 
-Uses `chess.engine.SimpleEngine.popen_uci()` from python-chess to communicate with the Stockfish binary via UCI. The `stockfish` pip package is used only to locate the binary path (`stockfish.Stockfish().get_stockfish_parameters()["stockfish_path"]`); all engine communication uses `chess.engine.Score`. Raises `RuntimeError` with install hint if Stockfish binary not found.
+Uses `chess.engine.SimpleEngine.popen_uci("stockfish")` from python-chess. The binary is located via `shutil.which("stockfish")`; if not found, raises `RuntimeError` with the message: `"stockfish binary not found. Install it: brew install stockfish (macOS) or apt install stockfish (Linux)"`.
+
+`eval_before` is the score of the top candidate line from the single multipv analysis call — this is exactly the engine's evaluation of the root position.
+
+`eval_after_best` requires a second `engine.analyse()` call on the board after pushing the best move. This is a deliberate second call; it gives the evaluation from the opponent's perspective after the best response.
 
 ### motifs.py
 
@@ -117,9 +121,9 @@ Position: White to move  Eval: +0.8
 Best move: Nf6+  → Eval: +2.1  (+1.3)
 
 Candidates:
-  1. Nf6+   +2.1  e4 Nf6+ Kg8 Nxd7
-  2. Rxd7   +1.4  Rxd7 Nxd7 Bxf6
-  3. Bxh7+  +0.9  Bxh7+ Kxh7 Qh5+
+  1. Nf6+   +2.1  1. Nf6+ Kg8 2. Nxd7
+  2. Rxd7   +1.4  1. Rxd7 Nxd7 2. Bxf6
+  3. Bxh7+  +0.9  1. Bxh7+ Kxh7 2. Qh5+
 
 Motifs:
   [fork 0.95]     Nf6+ attacks Kg8 and Qd7 simultaneously
@@ -139,10 +143,10 @@ Scores displayed as `+N.NN` (White advantage) / `-N.NN` (Black advantage) / `#N`
 
 ## Dependencies
 
-- `python-chess` (already in requirements.txt) — board, move generation, heuristics
-- `stockfish` pip package — Stockfish binary management and UCI wrapper
+- `python-chess` (already in requirements.txt) — board, move generation, UCI engine wrapper, heuristics
+- No additional pip package needed. Stockfish binary located via `shutil.which("stockfish")`.
 
-Add `stockfish` to `requirements.txt`.
+Users must have `stockfish` installed as a system binary (`brew install stockfish` / `apt install stockfish`). Document this in the justfile recipe comment.
 
 ## Justfile Recipe
 
