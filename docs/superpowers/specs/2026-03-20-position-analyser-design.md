@@ -99,7 +99,7 @@ usage: python -m analyse [-h] [--pgn FILE] [--lines N] [FEN | -]
 - `--lines N`: number of candidate lines (default 5)
 - If both a positional FEN and `--pgn` are provided: `Error: cannot specify both FEN and --pgn\n` + exit 1
 
-`eval_before` is obtained from a single multiline analysis call (Stockfish reports the score of the root position as part of its analysis); no second engine call is needed.
+`eval_before` is the score of the top candidate line from the multipv analysis call — this is the engine's evaluation of the root position. `eval_after_best` requires a second `engine.analyse()` call on the board after pushing the best move.
 
 ## Motif Detection Heuristics
 
@@ -137,7 +137,7 @@ Scores displayed as `+N.NN` (White advantage) / `-N.NN` (Black advantage) / `#N`
 | Situation | Behaviour |
 |-----------|-----------|
 | Unrecognised input | `Error: could not parse as FEN or PGN\n` + exit 1 |
-| Stockfish not installed | `Error: stockfish binary not found. Install: pip install stockfish\n` + exit 1 |
+| Stockfish not installed | `Error: stockfish binary not found. Install it: brew install stockfish (macOS) or apt install stockfish (Linux)\n` + exit 1 |
 | Illegal position | `Error: illegal position\n` + exit 1 |
 | Stdin `-` with no data | `Error: no input on stdin\n` + exit 1 |
 
