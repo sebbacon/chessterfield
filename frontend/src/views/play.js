@@ -65,6 +65,10 @@ export async function mountPlay(app, navigate, positionId) {
         <div class="move-history-wrap">
           <h3>Moves</h3>
           <ol id="move-history" class="move-history"></ol>
+          <div class="move-nav">
+            <button id="back-move-btn" class="btn-icon" disabled title="Previous move">&#9664;</button>
+            <button id="fwd-move-btn" class="btn-icon" disabled title="Next move">&#9654;</button>
+          </div>
         </div>
       </aside>
     </div>
@@ -87,6 +91,8 @@ export async function mountPlay(app, navigate, positionId) {
   let gameOver = false
   let engineMoving = false  // true when engine is making a move (vs just analyzing)
   let hintMode = false      // true when waiting for engine's hint bestmove
+  let positionHistory = [{ fen: position.fen, lastMove: null }]
+  let viewIndex = 0         // which position in positionHistory is displayed
 
   // --- Worker setup ---
   try {
@@ -148,7 +154,7 @@ export async function mountPlay(app, navigate, positionId) {
 
   function updateHintBtn() {
     const btn = app.querySelector('#hint-btn')
-    btn.disabled = !workerReady || !isUserTurn() || gameOver || engineMoving
+    btn.disabled = !workerReady || !isUserTurn() || gameOver || engineMoving || !atLatest()
   }
 
   // --- Eval bar ---
@@ -185,10 +191,52 @@ export async function mountPlay(app, navigate, positionId) {
     ol.innerHTML = ''
     for (let i = 0; i < history.length; i += 2) {
       const li = document.createElement('li')
-      li.textContent = `${history[i] ?? ''} ${history[i + 1] ?? ''}`
+      const w = document.createElement('span')
+      w.className = 'move-token'
+      w.textContent = history[i]
+      w.dataset.idx = i + 1
+      if (viewIndex === i + 1) w.classList.add('current-move')
+      li.appendChild(w)
+      if (history[i + 1] !== undefined) {
+        li.appendChild(document.createTextNode(' '))
+        const b = document.createElement('span')
+        b.className = 'move-token'
+        b.textContent = history[i + 1]
+        b.dataset.idx = i + 2
+        if (viewIndex === i + 2) b.classList.add('current-move')
+        li.appendChild(b)
+      }
       ol.appendChild(li)
     }
-    ol.scrollTop = ol.scrollHeight
+    // Scroll current move into view
+    const cur = ol.querySelector('.current-move')
+    if (cur) cur.scrollIntoView?.({ block: 'nearest' })
+    else ol.scrollTop = ol.scrollHeight
+  }
+
+  // --- History navigation ---
+  function atLatest() { return viewIndex === positionHistory.length - 1 }
+
+  function navigateTo(index) {
+    viewIndex = index
+    const { fen, lastMove } = positionHistory[index]
+    const live = atLatest()
+    cg.set({
+      fen,
+      lastMove: lastMove ?? undefined,
+      movable: {
+        color: userColor,
+        dests: (live && isUserTurn() && workerReady && !gameOver) ? toDests(chess) : new Map(),
+      },
+    })
+    updateMoveHistory()
+    updateNavButtons()
+    updateHintBtn()
+  }
+
+  function updateNavButtons() {
+    app.querySelector('#back-move-btn').disabled = viewIndex === 0
+    app.querySelector('#fwd-move-btn').disabled = atLatest()
   }
 
   // --- Game-end detection ---
@@ -237,7 +285,10 @@ export async function mountPlay(app, navigate, positionId) {
 
     const move = chess.move({ from, to, promotion })
     if (!move) return
+    positionHistory.push({ fen: chess.fen(), lastMove: [from, to] })
+    viewIndex = positionHistory.length - 1
     updateMoveHistory()
+    updateNavButtons()
 
     cg.set({
       fen: chess.fen(),
@@ -282,7 +333,10 @@ export async function mountPlay(app, navigate, positionId) {
 
             hintMode = false
             clearHint()
+            positionHistory.push({ fen: chess.fen(), lastMove: [orig, dest] })
+            viewIndex = positionHistory.length - 1
             updateMoveHistory()
+            updateNavButtons()
             cg.set({
               fen: chess.fen(),
               turnColor: chess.turn() === 'w' ? 'white' : 'black',
@@ -339,6 +393,18 @@ export async function mountPlay(app, navigate, positionId) {
     })
   })
 
+  // --- History navigation ---
+  app.querySelector('#back-move-btn').addEventListener('click', () => {
+    if (viewIndex > 0) navigateTo(viewIndex - 1)
+  })
+  app.querySelector('#fwd-move-btn').addEventListener('click', () => {
+    if (!atLatest()) navigateTo(viewIndex + 1)
+  })
+  app.querySelector('#move-history').addEventListener('click', e => {
+    const token = e.target.closest('.move-token')
+    if (token) navigateTo(parseInt(token.dataset.idx))
+  })
+
   // --- Hint ---
   app.querySelector('#hint-btn').addEventListener('click', () => {
     if (!workerReady || !isUserTurn() || gameOver || engineMoving) return
@@ -367,6 +433,8 @@ export async function mountPlay(app, navigate, positionId) {
     gameOver = false
     engineMoving = false
     hintMode = false
+    positionHistory = [{ fen: position.fen, lastMove: null }]
+    viewIndex = 0
     chess = new Chess(position.fen)
     updateMoveHistory()
     app.querySelector('#eval-fill').style.height = '50%'

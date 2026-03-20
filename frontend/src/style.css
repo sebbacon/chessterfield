@@ -316,6 +316,26 @@ body {
 #hint-btn:disabled { opacity: 0.4; cursor: default; }
 #hint-btn:disabled:hover { background: #0f3460; }
 
+/* Move navigation */
+.move-nav { display: flex; gap: 6px; margin-top: 8px; }
+.btn-icon {
+  flex: 1;
+  padding: 6px;
+  background: #0f3460;
+  color: #e0e0e0;
+  border: 1px solid #1a5276;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.btn-icon:hover:not(:disabled) { background: #1a5276; }
+.btn-icon:disabled { opacity: 0.35; cursor: default; }
+
+/* Move token highlighting */
+.move-token { cursor: pointer; border-radius: 3px; padding: 1px 3px; }
+.move-token:hover { background: #1a5276; }
+.move-token.current-move { background: #e94560; color: #fff; }
+
 /* Engine banner */
 .engine-banner {
   background: #c0392b;
