@@ -59,3 +59,8 @@ import-lichess *args:
 # Usage: just analyse "FEN" | just analyse --pgn game.pgn
 analyse *args:
     .venv/bin/python -m analyse {{args}}
+
+# Analyse a position from the database by ID (requires: brew install stockfish)
+# Usage: just analyse-db 42
+analyse-db id:
+    .venv/bin/python manage.py shell -c "from positions.models import Position; print(Position.objects.get(id={{id}}).fen)" | .venv/bin/python -m analyse -

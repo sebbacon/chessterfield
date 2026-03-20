@@ -29,17 +29,19 @@ def tag(db):
 def test_list_positions_empty(client):
     r = client.get('/api/positions/')
     assert r.status_code == 200
-    assert json.loads(r.content) == []
+    data = json.loads(r.content)
+    assert data['results'] == []
+    assert data['count'] == 0
 
 
 @pytest.mark.django_db
 def test_list_positions_returns_positions(client, position):
     r = client.get('/api/positions/')
     data = json.loads(r.content)
-    assert len(data) == 1
-    assert data[0]['name'] == 'Starting Position'
-    assert data[0]['fen'] == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
-    assert data[0]['tags'] == []
+    assert data['count'] == 1
+    assert data['results'][0]['name'] == 'Starting Position'
+    assert data['results'][0]['fen'] == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+    assert data['results'][0]['tags'] == []
 
 
 @pytest.mark.django_db
@@ -55,7 +57,7 @@ def test_list_positions_tag_filter_or_logic(client):
     p3.tags.add(t3)
     r = client.get('/api/positions/?tag=opening&tag=endgame')
     data = json.loads(r.content)
-    names = {d['name'] for d in data}
+    names = {d['name'] for d in data['results']}
     assert names == {'P1', 'P2'}
 
 
@@ -151,8 +153,8 @@ def test_list_positions_newest_first(client):
     p2 = Position.objects.create(name='Newer', fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
     r = client.get('/api/positions/')
     data = json.loads(r.content)
-    assert data[0]['name'] == 'Newer'
-    assert data[1]['name'] == 'Older'
+    assert data['results'][0]['name'] == 'Newer'
+    assert data['results'][1]['name'] == 'Older'
 
 
 # --- GET /api/tags/ ---

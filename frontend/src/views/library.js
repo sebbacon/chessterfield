@@ -22,6 +22,8 @@ export async function mountLibrary(app, navigate) {
   let allTags = []
   let selectedTags = new Set()
   let positionRequestSeq = 0
+  let currentPage = 1
+  let totalPages = 1
 
   async function loadTags() {
     try {
@@ -51,34 +53,37 @@ export async function mountLibrary(app, navigate) {
       cb.addEventListener('change', () => {
         if (cb.checked) selectedTags.add(cb.value)
         else selectedTags.delete(cb.value)
-        loadPositions()
+        currentPage = 1
+        loadPositions(true)
       })
     })
   }
 
-  async function loadPositions() {
+  async function loadPositions(replace = true) {
     const seq = ++positionRequestSeq
     const grid = app.querySelector('#position-grid')
-    grid.innerHTML = '<p>Loading...</p>'
+    if (replace) grid.innerHTML = '<p>Loading...</p>'
     try {
-      const params = [...selectedTags].map(t => `tag=${encodeURIComponent(t)}`).join('&')
-      const url = '/api/positions/' + (params ? `?${params}` : '')
+      const params = [...selectedTags].map(t => `tag=${encodeURIComponent(t)}`)
+      params.push(`page=${currentPage}`)
+      const url = '/api/positions/?' + params.join('&')
       const r = await fetch(url)
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const positions = await r.json()
-      if (seq === positionRequestSeq) renderPositions(positions)
+      const data = await r.json()
+      if (seq !== positionRequestSeq) return
+      totalPages = data.total_pages
+      if (replace) {
+        renderPositions(data.results, data.count)
+      } else {
+        appendPositions(data.results)
+      }
     } catch {
       if (seq === positionRequestSeq) showToast('Failed to load positions')
     }
   }
 
-  function renderPositions(positions) {
-    const grid = app.querySelector('#position-grid')
-    if (positions.length === 0) {
-      grid.innerHTML = '<p class="muted">No positions yet. Import one!</p>'
-      return
-    }
-    grid.innerHTML = positions.map(p => `
+  function positionCardHtml(p) {
+    return `
       <div class="position-card">
         <div class="position-miniboard">${fenToMiniBoard(p.fen)}</div>
         <div class="position-info">
@@ -87,10 +92,50 @@ export async function mountLibrary(app, navigate) {
         </div>
         <button class="btn-primary play-btn" data-id="${p.id}">Play</button>
       </div>
-    `).join('')
+    `
+  }
 
-    grid.querySelectorAll('.play-btn').forEach(btn => {
+  function bindPlayButtons(container) {
+    container.querySelectorAll('.play-btn').forEach(btn => {
       btn.addEventListener('click', () => navigate('play', parseInt(btn.dataset.id)))
+    })
+  }
+
+  function renderPositions(positions, count) {
+    const grid = app.querySelector('#position-grid')
+    if (positions.length === 0) {
+      grid.innerHTML = '<p class="muted">No positions yet. Import one!</p>'
+      return
+    }
+    grid.innerHTML = positions.map(positionCardHtml).join('') + loadMoreHtml(count)
+    bindPlayButtons(grid)
+    bindLoadMore(grid)
+  }
+
+  function appendPositions(positions) {
+    const grid = app.querySelector('#position-grid')
+    const oldBtn = grid.querySelector('#load-more-btn')
+    if (oldBtn) oldBtn.parentElement.remove()
+    const frag = document.createDocumentFragment()
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = positions.map(positionCardHtml).join('') + loadMoreHtml()
+    while (wrapper.firstChild) frag.appendChild(wrapper.firstChild)
+    grid.appendChild(frag)
+    bindPlayButtons(grid)
+    bindLoadMore(grid)
+  }
+
+  function loadMoreHtml() {
+    if (currentPage >= totalPages) return ''
+    return `<div class="load-more-row"><button id="load-more-btn" class="btn-secondary">Load more</button></div>`
+  }
+
+  function bindLoadMore(grid) {
+    const btn = grid.querySelector('#load-more-btn')
+    if (!btn) return
+    btn.addEventListener('click', () => {
+      currentPage++
+      loadPositions(false)
     })
   }
 

@@ -21,14 +21,29 @@ def _apply_tags(position, tag_names):
     position.tags.set(tags)
 
 
+PAGE_SIZE = 48
+
+
 @require_http_methods(['GET', 'POST'])
 def positions_list(request):
     if request.method == 'GET':
+        from django.core.paginator import Paginator
         qs = Position.objects.all()
         tag_filters = request.GET.getlist('tag')
         if tag_filters:
             qs = qs.filter(tags__name__in=tag_filters).distinct()
-        return JsonResponse([_position_to_dict(p) for p in qs], safe=False)
+        paginator = Paginator(qs, PAGE_SIZE)
+        try:
+            page_num = int(request.GET.get('page', 1))
+        except (ValueError, TypeError):
+            page_num = 1
+        page = paginator.get_page(page_num)
+        return JsonResponse({
+            'results': [_position_to_dict(p) for p in page],
+            'count': paginator.count,
+            'page': page.number,
+            'total_pages': paginator.num_pages,
+        })
 
     # POST
     try:

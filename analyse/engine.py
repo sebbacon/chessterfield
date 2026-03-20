@@ -32,7 +32,7 @@ def analyse(board: chess.Board, num_lines: int = 5) -> EngineResult:
         # First call: get top N lines from root position
         infos = engine.analyse(
             board,
-            chess.engine.Limit(depth=20),
+            chess.engine.Limit(depth=20, time=5.0),
             multipv=num_lines,
         )
         if not isinstance(infos, list):
@@ -52,7 +52,7 @@ def analyse(board: chess.Board, num_lines: int = 5) -> EngineResult:
         # Second call: eval after best move
         board_after = board.copy()
         board_after.push(best_move)
-        info_after = engine.analyse(board_after, chess.engine.Limit(depth=20), multipv=1)
+        info_after = engine.analyse(board_after, chess.engine.Limit(depth=20, time=5.0), multipv=1)
         if isinstance(info_after, list):
             info_after = info_after[0]
         eval_after_best = info_after["score"].white()
