@@ -54,3 +54,8 @@ build:
 # Import games from Lichess (--max-games N to limit)
 import-lichess *args:
     .venv/bin/python manage.py import_lichess {{args}}
+
+# Analyse a chess position (requires: brew install stockfish)
+# Usage: just analyse "FEN" | just analyse --pgn game.pgn
+analyse *args:
+    .venv/bin/python -m analyse {{args}}
