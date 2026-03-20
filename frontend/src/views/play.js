@@ -84,6 +84,7 @@ export async function mountPlay(app, navigate, positionId) {
   let worker = null
   let workerReady = false
   let gameOver = false
+  let engineMoving = false  // true when engine is making a move (vs just analyzing)
 
   // --- Worker setup ---
   try {
@@ -120,8 +121,11 @@ export async function mountPlay(app, navigate, positionId) {
 
     // Engine move
     if (line.startsWith('bestmove') && !gameOver) {
-      const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
-      if (match) applyEngineMove(match[1])
+      if (engineMoving) {
+        const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
+        if (match) applyEngineMove(match[1])
+      }
+      engineMoving = false
     }
   }
 
@@ -226,8 +230,9 @@ export async function mountPlay(app, navigate, positionId) {
     const result = checkGameEnd()
     if (result) { showResult(result); return }
 
-    // After engine moves, it's user's turn — start eval for user's position
+    // After engine moves, analyse user's position for the eval bar (no move applied)
     if (workerReady) {
+      engineMoving = false
       sendToEngine(`position fen ${chess.fen()}`)
       sendToEngine('go movetime 3000')
     }
@@ -262,8 +267,9 @@ export async function mountPlay(app, navigate, positionId) {
             const result = checkGameEnd()
             if (result) { showResult(result); return }
 
-            // Trigger engine
+            // Trigger engine move
             if (workerReady) {
+              engineMoving = true
               sendToEngine('stop')
               sendToEngine(`position fen ${chess.fen()}`)
               sendToEngine('go movetime 3000')
@@ -279,6 +285,7 @@ export async function mountPlay(app, navigate, positionId) {
   // --- Engine first move (when engine goes first) ---
   function engineGoFirst() {
     if (workerReady) {
+      engineMoving = true
       sendToEngine(`position fen ${chess.fen()}`)
       sendToEngine('go movetime 3000')
     } else if (worker) {
@@ -287,6 +294,7 @@ export async function mountPlay(app, navigate, positionId) {
       worker.onmessage = (e) => {
         originalHandler(e)
         if (e.data.type === 'ready') {
+          engineMoving = true
           sendToEngine(`position fen ${chess.fen()}`)
           sendToEngine('go movetime 3000')
           worker.onmessage = originalHandler
@@ -322,6 +330,7 @@ export async function mountPlay(app, navigate, positionId) {
   // --- Start / restart game ---
   function startGame() {
     gameOver = false
+    engineMoving = false
     chess = new Chess(position.fen)
     updateMoveHistory()
     app.querySelector('#eval-fill').style.height = '50%'
