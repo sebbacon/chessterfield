@@ -1,6 +1,8 @@
 import chess
 import pytest
 from analyse.motifs import detect, Motif
+import chess.engine
+from analyse.engine import EngineResult, Line
 
 # ── Fork ──────────────────────────────────────────────────────────────────────
 # White Ne5 can go to f7, attacking Black Qd8 and Rh8
@@ -65,3 +67,63 @@ def test_motifs_sorted_by_confidence():
     motifs = detect(board, FORK_MOVE)
     confidences = [m.confidence for m in motifs]
     assert confidences == sorted(confidences, reverse=True)
+
+
+# ── Mate Threat ───────────────────────────────────────────────────────────────
+def test_mate_threat_detected():
+    board = chess.Board()
+    move = chess.Move.from_uci("e2e4")
+    from analyse.motifs import _detect_mate_threat
+    mate_score = chess.engine.PovScore(chess.engine.Mate(3), chess.WHITE).white()
+    result = EngineResult(
+        best_move=move,
+        lines=[Line(moves=[move], score=mate_score)],
+        eval_before=mate_score,
+        eval_after_best=mate_score,
+    )
+    motif = _detect_mate_threat(result)
+    assert motif is not None
+    assert motif.label == "mate_threat"
+    assert "3" in motif.detail
+
+
+# ── Hanging Piece ─────────────────────────────────────────────────────────────
+HANG_FEN = "r1k5/8/8/8/8/8/8/R6K w - - 0 1"
+HANG_MOVE = chess.Move.from_uci("h1g1")  # any quiet move; hanging detected on current board
+
+
+def test_hanging_piece_detected():
+    board = chess.Board(HANG_FEN)
+    motifs = detect(board, HANG_MOVE)
+    assert "hanging" in _labels(motifs)
+
+
+def test_hanging_not_detected_when_defended():
+    fen = "r7/k7/8/8/8/8/8/R6K w - - 0 1"  # Black Ra8, Black Ka7 defends a8
+    board = chess.Board(fen)
+    motifs = detect(board, chess.Move.from_uci("h1g1"))
+    assert "hanging" not in _labels(motifs)
+
+
+# ── Overloaded Defender ───────────────────────────────────────────────────────
+# White Re4+Bc3 attack Nd4; White Re4+Bh2 attack Nf4; Black Qe3 defends both
+OVERLOAD_FEN = "4k3/8/8/8/3nRn2/2B1q3/7B/7K w - - 0 1"
+OVERLOAD_MOVE = chess.Move.from_uci("e4e5")  # any move; overload detected on current board
+
+
+def test_overloaded_defender_detected():
+    board = chess.Board(OVERLOAD_FEN)
+    motifs = detect(board, OVERLOAD_MOVE)
+    assert "overloaded" in _labels(motifs)
+
+
+# ── Back Rank Weakness ────────────────────────────────────────────────────────
+# Black Kg8, Nf8+Rh8 block f8/h8; pawns g7/h7 block g7/h7; White Ra1 on open a-file
+BACK_RANK_FEN = "5nkr/6pp/8/8/8/8/8/R6K w - - 0 1"
+BACK_RANK_MOVE = chess.Move.from_uci("a1a8")
+
+
+def test_back_rank_weakness_detected():
+    board = chess.Board(BACK_RANK_FEN)
+    motifs = detect(board, BACK_RANK_MOVE)
+    assert "back_rank" in _labels(motifs)

@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import chess
+from analyse.engine import EngineResult
 
 PIECE_VALUES = {
     chess.PAWN: 1,
@@ -137,13 +140,136 @@ def _detect_discovered_attack(board: chess.Board, move: chess.Move) -> Motif | N
     return None
 
 
-def detect(board: chess.Board, best_move: chess.Move) -> list[Motif]:
+def _detect_mate_threat(result: EngineResult) -> Motif | None:
+    score = result.lines[0].score
+    if score.is_mate():
+        n = score.mate()
+        if n is not None and n > 0:
+            return Motif(label="mate_threat", confidence=1.0, detail=f"Forced mate in {n}")
+    return None
+
+
+def _detect_hanging(board: chess.Board, move: chess.Move) -> Motif | None:
+    our_color = board.turn
+    enemy_color = not our_color
+
+    for sq in chess.SquareSet(board.occupied_co[enemy_color]):
+        piece = board.piece_at(sq)
+        if piece is None or piece.piece_type == chess.KING:
+            continue
+        attackers_count = len(board.attackers(our_color, sq))
+        defenders_count = len(board.attackers(enemy_color, sq))
+        if attackers_count == 0:
+            continue
+        if defenders_count == 0:
+            detail = (
+                f"{piece.symbol().upper()} on {chess.square_name(sq)} is undefended "
+                f"({defenders_count} defenders, {attackers_count} attackers)"
+            )
+            return Motif(label="hanging", confidence=0.8, detail=detail)
+        # Attacked by lower-value piece and defenders <= attackers
+        attacker_values = sorted(
+            _piece_value(board, a) for a in board.attackers(our_color, sq)
+        )
+        piece_val = _piece_value(board, sq)
+        if attacker_values and attacker_values[0] < piece_val and defenders_count <= attackers_count:
+            detail = (
+                f"{piece.symbol().upper()} on {chess.square_name(sq)} is undefended "
+                f"({defenders_count} defenders, {attackers_count} attackers)"
+            )
+            return Motif(label="hanging", confidence=0.8, detail=detail)
+    return None
+
+
+def _detect_overloaded(board: chess.Board, move: chess.Move) -> Motif | None:
+    our_color = board.turn
+    enemy_color = not our_color
+
+    for def_sq in chess.SquareSet(board.occupied_co[enemy_color]):
+        defender = board.piece_at(def_sq)
+        if defender is None:
+            continue
+        defended_squares = board.attacks(def_sq)
+        attacked_defended = [
+            sq for sq in defended_squares
+            if board.color_at(sq) == enemy_color
+            and board.piece_at(sq) is not None
+            and board.piece_at(sq).piece_type != chess.KING
+            and len(board.attackers(our_color, sq)) > 0
+        ]
+        if len(attacked_defended) >= 2:
+            p1_sq, p2_sq = attacked_defended[0], attacked_defended[1]
+            p1 = board.piece_at(p1_sq)
+            p2 = board.piece_at(p2_sq)
+            detail = (
+                f"{defender.symbol().upper()} on {chess.square_name(def_sq)} defends both "
+                f"{p1.symbol().upper()} on {chess.square_name(p1_sq)} and "
+                f"{p2.symbol().upper()} on {chess.square_name(p2_sq)} but cannot protect both"
+            )
+            return Motif(label="overloaded", confidence=0.75, detail=detail)
+    return None
+
+
+def _detect_back_rank(board: chess.Board, move: chess.Move) -> Motif | None:
+    our_color = board.turn
+    enemy_color = not our_color
+
+    enemy_king_sq = board.king(enemy_color)
+    if enemy_king_sq is None:
+        return None
+
+    back_rank = chess.BB_RANK_8 if enemy_color == chess.BLACK else chess.BB_RANK_1
+    if not (chess.BB_SQUARES[enemy_king_sq] & back_rank):
+        return None
+
+    # Check if king escape squares on the back rank are blocked by own pawns
+    king_attacks = board.attacks(enemy_king_sq)
+    back_rank_escapes = chess.SquareSet(king_attacks & back_rank)
+    own_pawns = board.pieces(chess.PAWN, enemy_color)
+    if not all(sq in own_pawns or board.piece_at(sq) is not None for sq in back_rank_escapes):
+        return None
+
+    # Do we have a rook or queen that can reach the back rank?
+    for sq in board.pieces(chess.ROOK, our_color) | board.pieces(chess.QUEEN, our_color):
+        if chess.BB_SQUARES[sq] & back_rank:
+            king_sq_name = chess.square_name(enemy_king_sq)
+            return Motif(
+                label="back_rank",
+                confidence=0.8,
+                detail=f"Enemy king on {king_sq_name} is trapped on the back rank",
+            )
+        # Check file/rank line of sight to back rank
+        rank = chess.square_rank(enemy_king_sq)
+        file_ = chess.square_file(sq)
+        target_sq = chess.square(file_, rank)
+        between = chess.between(sq, target_sq)
+        if not (board.occupied & between):
+            king_sq_name = chess.square_name(enemy_king_sq)
+            return Motif(
+                label="back_rank",
+                confidence=0.8,
+                detail=f"Enemy king on {king_sq_name} is trapped on the back rank",
+            )
+    return None
+
+
+def detect(
+    board: chess.Board,
+    best_move: chess.Move,
+    result: EngineResult | None = None,
+) -> list[Motif]:
     """Return detected motifs sorted by confidence descending."""
-    detectors = [
-        _detect_fork,
-        _detect_pin,
-        _detect_skewer,
-        _detect_discovered_attack,
-    ]
-    motifs = [m for d in detectors if (m := d(board, best_move)) is not None]
+    motifs = []
+    for detector in [_detect_fork, _detect_pin, _detect_skewer, _detect_discovered_attack]:
+        m = detector(board, best_move)
+        if m:
+            motifs.append(m)
+    for detector in [_detect_hanging, _detect_overloaded, _detect_back_rank]:
+        m = detector(board, best_move)
+        if m:
+            motifs.append(m)
+    if result is not None:
+        m = _detect_mate_threat(result)
+        if m:
+            motifs.append(m)
     return sorted(motifs, key=lambda m: m.confidence, reverse=True)
