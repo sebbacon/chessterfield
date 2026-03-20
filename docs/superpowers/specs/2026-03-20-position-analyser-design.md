@@ -53,18 +53,20 @@ class Line:
 class EngineResult:
     best_move: chess.Move
     lines: list[Line]           # top N lines
-    eval_before: chess.engine.Score
-    eval_after_best: chess.engine.Score
+    eval_before: chess.engine.Score   # root position score (from side to move)
+    eval_after_best: chess.engine.Score  # position score after best move (from side to move)
 
 def analyse(board: chess.Board, num_lines: int = 5) -> EngineResult:
     """Run Stockfish and return top N lines with evals."""
 ```
 
-Uses `chess.engine.SimpleEngine.popen_uci("stockfish")` from python-chess. The binary is located via `shutil.which("stockfish")`; if not found, raises `RuntimeError` with the message: `"stockfish binary not found. Install it: brew install stockfish (macOS) or apt install stockfish (Linux)"`.
+**Score convention:** all `chess.engine.Score` values are from the perspective of the **side to move** in the position being evaluated. Positive = good for side to move.
 
-`eval_before` is the score of the top candidate line from the single multipv analysis call — this is exactly the engine's evaluation of the root position.
+**Implementation:**
+1. Call `engine.analyse(board, chess.engine.Limit(depth=20), multipv=num_lines)` to get `num_lines` candidate lines. `eval_before` = `info[0]["score"].relative` (top line score = root eval, side to move).
+2. Push `best_move` onto a copy of `board`, call `engine.analyse()` again with `multipv=1`. `eval_after_best` = `info[0]["score"].relative` (from the *new* side to move, i.e. the opponent's perspective).
 
-`eval_after_best` requires a second `engine.analyse()` call on the board after pushing the best move. This is a deliberate second call; it gives the evaluation from the opponent's perspective after the best response.
+Uses `chess.engine.SimpleEngine.popen_uci(path)` where `path = shutil.which("stockfish")`. If `path` is `None`, raises `RuntimeError` with the message: `"stockfish binary not found. Install it: brew install stockfish (macOS) or apt install stockfish (Linux)"`.
 
 ### motifs.py
 
@@ -79,7 +81,7 @@ def detect(board: chess.Board, best_move: chess.Move) -> list[Motif]:
     """Return detected motifs sorted by confidence descending."""
 ```
 
-Detection uses python-chess only (`attackers()`, `is_pinned()`, move simulation). No engine call.
+Detection uses python-chess only. No engine call. See heuristics section below.
 
 ### explain.py
 
@@ -87,6 +89,20 @@ Detection uses python-chess only (`attackers()`, `is_pinned()`, move simulation)
 def explain(board: chess.Board, result: EngineResult, motifs: list[Motif]) -> str:
     """Format engine result and motifs into human-readable output."""
 ```
+
+**Output construction rules:**
+
+- **Line 1:** `Position: {White|Black} to move  Eval: {score}`
+  - Score formatted as `+N.NN` / `-N.NN` / `#N` from White's perspective (negate `eval_before` if Black to move)
+- **Line 2:** `Best move: {san}  → Eval: {after_score}  ({delta})`
+  - `{delta}` = `eval_after_best` converted to White's perspective minus `eval_before` converted to White's perspective, shown as `(+N.NN)` or `(-N.NN)`
+- **Blank line**
+- **`Candidates:` block:** one line per `Line` in `result.lines`:
+  - `  {rank}. {san_of_first_move}   {score}  {pv_in_san}` where pv is first 4 half-moves joined by spaces with move numbers (e.g. `1. Nf6+ Kg8 2. Nxd7`)
+- **Blank line**
+- **`Motifs:` block:** one line per motif with confidence ≥ 0.5:
+  - `  [{label} {confidence:.2f}]  {detail}`
+- If no motifs ≥ 0.5: print `  (none detected)`
 
 ### __main__.py
 
@@ -96,23 +112,74 @@ usage: python -m analyse [-h] [--pgn FILE] [--lines N] [FEN | -]
 
 - Positional arg: FEN string, or `-` for stdin
 - `--pgn FILE`: read PGN from file
-- `--lines N`: number of candidate lines (default 5)
+- `--lines N`: number of candidate lines (default 5, must match `analyse()` default)
 - If both a positional FEN and `--pgn` are provided: `Error: cannot specify both FEN and --pgn\n` + exit 1
 
-`eval_before` is the score of the top candidate line from the multipv analysis call — this is the engine's evaluation of the root position. `eval_after_best` requires a second `engine.analyse()` call on the board after pushing the best move.
+Flow: `parse_input` → `engine.analyse` → `motifs.detect` → `explain.explain` → print
 
 ## Motif Detection Heuristics
 
-| Motif | Detection logic |
-|-------|----------------|
-| **Fork** | After simulating best_move: moving piece attacks 2+ enemy pieces worth ≥ knight |
-| **Pin** | A defending piece is pinned (cannot legally move without exposing a more-valuable piece behind it); detected when `board.is_pinned()` is true for an enemy piece that would otherwise recapture — i.e. a pin the moving side is *exploiting* |
-| **Skewer** | A high-value piece is attacked on a ray; a lower-value piece sits behind it on the same ray |
-| **Discovered attack** | Moving a piece reveals a ray attack from a piece behind it (check `attackers()` before/after) |
-| **Mate threat** | Engine score is `Mate` in N moves |
-| **Hanging piece** | An attacked piece has more attackers than defenders, or is attacked by a lower-value piece with no legal recapture |
-| **Overloaded defender** | A single piece defends 2+ attacked enemy pieces — capturing one forces it to abandon another |
-| **Back rank weakness** | King on rank 1 or 8 with all escape squares on that rank blocked by own pawns, and an enemy rook/queen on an open file |
+### Fork (confidence 0.9)
+
+After simulating `best_move` on a board copy:
+- Get all squares attacked by the piece that just moved (`board.attacks(best_move.to_square)`)
+- Filter to enemy pieces worth ≥ knight (knight=3, bishop=3, rook=5, queen=9, king=∞)
+- If 2+ such squares: fork detected
+- `detail`: `"{san} attacks {sq1} ({piece1}) and {sq2} ({piece2})"`
+
+### Pin (confidence 0.9)
+
+On the current board (before simulating best_move):
+- For each enemy piece that could legally recapture on `best_move.to_square`:
+  - Check `board.is_pinned(enemy_color, recapture_square)` — if True, that defender is pinned
+- If any pinned recapturer found: pin detected (the best move exploits the pin)
+- `detail`: `"{piece} on {sq} is pinned and cannot recapture"`
+
+### Skewer (confidence 0.85)
+
+After simulating `best_move`:
+- Get rays from `best_move.to_square` in all 8 directions using `chess.ray(from_sq, to_sq)`
+- For each ray, find the first enemy piece hit (`attacked_sq`) and the next piece on the same ray (`behind_sq`)
+- If `piece_value(attacked_sq) > piece_value(behind_sq)` and `behind_sq` is also an enemy piece: skewer detected
+- `detail`: `"Attacks {high-value piece} on {sq}, skewering {lower piece} on {sq2}"`
+
+### Discovered Attack (confidence 0.85)
+
+Compare attackers before and after simulating `best_move`:
+- For each enemy piece on the board: compute `board.attackers(our_color, enemy_sq)` before and after the move
+- If a new attacker appears that was *not* the moved piece (i.e. a piece on the ray behind `best_move.from_square`): discovered attack detected
+- `detail`: `"Moving {piece} reveals attack by {piece2} on {target}"`
+
+### Mate Threat (confidence 1.0)
+
+- If `result.lines[0].score` is `Mate(n)` for any n > 0: mate threat detected
+- `detail`: `"Forced mate in {n}"`
+
+### Hanging Piece (confidence 0.8)
+
+On the current board:
+- For each enemy piece at `sq`:
+  - `attackers = len(board.attackers(our_color, sq))`
+  - `defenders = len(board.attackers(enemy_color, sq))`
+  - Piece is hanging if `attackers > 0` and `defenders == 0`, OR if least-value attacker < piece value and defenders ≤ attackers
+- `detail`: `"{piece} on {sq} is undefended ({defenders} defenders, {attackers} attackers)"`
+
+### Overloaded Defender (confidence 0.75)
+
+On the current board:
+- For each enemy piece at `def_sq`: find all enemy pieces it defends (`board.attacks(def_sq)` intersected with enemy piece squares)
+- For each defended piece `p`, check if it is also attacked by us (`board.attackers(our_color, p) > 0`)
+- If the same defender defends 2+ attacked pieces: overloaded
+- `detail`: `"{piece} on {sq} defends both {p1} and {p2} but cannot protect both"`
+
+### Back Rank Weakness (confidence 0.8)
+
+On the current board:
+- Identify enemy king's square; check if it is on rank 1 (White) or rank 8 (Black)
+- Check if all squares on the king's rank adjacent to the king are occupied by own pawns (no escape)
+- Check if we have a rook or queen with line of sight to the back rank
+- If all three: back rank weakness detected
+- `detail`: `"Enemy king on {sq} is trapped on the back rank"`
 
 ## Output Format
 
@@ -130,7 +197,7 @@ Motifs:
   [hanging 0.80]  Bishop on c5 is undefended (0 defenders, 1 attacker)
 ```
 
-Scores displayed as `+N.NN` (White advantage) / `-N.NN` (Black advantage) / `#N` (mate in N).
+Scores always from White's perspective: `+N.NN` = White advantage, `-N.NN` = Black advantage, `#N` = mate in N (positive = White mates).
 
 ## Error Handling
 
@@ -140,18 +207,20 @@ Scores displayed as `+N.NN` (White advantage) / `-N.NN` (Black advantage) / `#N`
 | Stockfish not installed | `Error: stockfish binary not found. Install it: brew install stockfish (macOS) or apt install stockfish (Linux)\n` + exit 1 |
 | Illegal position | `Error: illegal position\n` + exit 1 |
 | Stdin `-` with no data | `Error: no input on stdin\n` + exit 1 |
+| Both FEN and --pgn given | `Error: cannot specify both FEN and --pgn\n` + exit 1 |
 
 ## Dependencies
 
 - `python-chess` (already in requirements.txt) — board, move generation, UCI engine wrapper, heuristics
 - No additional pip package needed. Stockfish binary located via `shutil.which("stockfish")`.
 
-Users must have `stockfish` installed as a system binary (`brew install stockfish` / `apt install stockfish`). Document this in the justfile recipe comment.
+Users must have `stockfish` installed as a system binary (`brew install stockfish` / `apt install stockfish`).
 
 ## Justfile Recipe
 
 ```just
-# Analyse a chess position (FEN or --pgn FILE)
+# Analyse a chess position (requires: brew install stockfish)
+# Usage: just analyse "FEN" | just analyse --pgn game.pgn
 analyse *args:
     .venv/bin/python -m analyse {{args}}
 ```
@@ -160,10 +229,10 @@ analyse *args:
 
 Tests live in `tests/analyse/`. The existing `pytest.ini` at the project root discovers `tests/` automatically; add `tests/analyse/__init__.py` to make it a package.
 
-- **test_parse.py** — FEN/PGN round-trips, invalid input raises `ValueError`
-- **test_motifs.py** — known tactical positions for each motif; e.g. classic Knight fork position detects `fork`, Legall's Mate setup detects `pin`
-- **test_engine.py** — mock `chess.engine.SimpleEngine`, verify `EngineResult` structure and score parsing
-- **test_explain.py** — snapshot/string-contains tests for output format with known inputs
+- **test_parse.py** — FEN/PGN round-trips, invalid input raises `ValueError`, both return correct board state
+- **test_motifs.py** — known tactical positions for each motif (e.g. classic Knight fork → `fork` detected, Légall's Mate setup → `pin` detected); also verify no false positives on quiet positions
+- **test_engine.py** — mock `chess.engine.SimpleEngine.popen_uci`, verify `EngineResult` structure, score parsing, and that a second engine call is made for `eval_after_best`
+- **test_explain.py** — string-contains tests: given a known `EngineResult` and `list[Motif]`, verify output contains expected lines; verify motifs below 0.5 confidence are omitted
 
 ## What Is Not In Scope
 
