@@ -97,6 +97,16 @@ def test_import_http_error(capsys):
 
 
 @pytest.mark.django_db
+def test_import_rate_limited(capsys):
+    with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
+        mock_get.return_value = _make_mock_response([], status_code=429)
+        with pytest.raises(CommandError):
+            call_command("import_lichess")
+
+    assert Position.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_import_position_name_format():
     with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
         mock_get.return_value = _make_mock_response([FAKE_GAME])
