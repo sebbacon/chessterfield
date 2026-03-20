@@ -37,7 +37,7 @@ def parse_input(text: str) -> tuple[chess.Board, chess.Move | None]:
     """Detect FEN vs PGN, return board at that position and last move played (or None)."""
 ```
 
-- If `text` is a valid FEN string: load directly, `last_move = None`
+- If `text` is a valid FEN string: load directly, call `board.is_valid()` — raises `ValueError("illegal position")` if invalid, otherwise `last_move = None`
 - If `text` looks like PGN: parse with `chess.pgn`, return board at final position and final move
 - Raises `ValueError` with a clear message on unrecognised input
 
@@ -60,11 +60,11 @@ def analyse(board: chess.Board, num_lines: int = 5) -> EngineResult:
     """Run Stockfish and return top N lines with evals."""
 ```
 
-**Score convention:** all `chess.engine.Score` values are from the perspective of the **side to move** in the position being evaluated. Positive = good for side to move.
+**Score convention:** all scores are stored and displayed from **White's perspective** (positive = White advantage). Use `info[0]["score"].white()` (python-chess `chess.engine.PovScore.white()`) to normalise to White's POV before storing.
 
 **Implementation:**
-1. Call `engine.analyse(board, chess.engine.Limit(depth=20), multipv=num_lines)` to get `num_lines` candidate lines. `eval_before` = `info[0]["score"].relative` (top line score = root eval, side to move).
-2. Push `best_move` onto a copy of `board`, call `engine.analyse()` again with `multipv=1`. `eval_after_best` = `info[0]["score"].relative` (from the *new* side to move, i.e. the opponent's perspective).
+1. Call `engine.analyse(board, chess.engine.Limit(depth=20), multipv=num_lines)` to get `num_lines` candidate lines. `eval_before` = `info[0]["score"].white()`.
+2. Push `best_move` onto a copy of `board`, call `engine.analyse()` again (`multipv=1`). `eval_after_best` = `info[0]["score"].white()`.
 
 Uses `chess.engine.SimpleEngine.popen_uci(path)` where `path = shutil.which("stockfish")`. If `path` is `None`, raises `RuntimeError` with the message: `"stockfish binary not found. Install it: brew install stockfish (macOS) or apt install stockfish (Linux)"`.
 
@@ -93,12 +93,12 @@ def explain(board: chess.Board, result: EngineResult, motifs: list[Motif]) -> st
 **Output construction rules:**
 
 - **Line 1:** `Position: {White|Black} to move  Eval: {score}`
-  - Score formatted as `+N.NN` / `-N.NN` / `#N` from White's perspective (negate `eval_before` if Black to move)
+  - Score formatted as `+N.NN` / `-N.NN` / `#N` from White's perspective (`eval_before`, already in White's POV)
 - **Line 2:** `Best move: {san}  → Eval: {after_score}  ({delta})`
-  - `{delta}` = `eval_after_best` converted to White's perspective minus `eval_before` converted to White's perspective, shown as `(+N.NN)` or `(-N.NN)`
+  - `{delta}` = `eval_after_best - eval_before` (both already in White's POV), shown as `(+N.NN)` or `(-N.NN)`
 - **Blank line**
 - **`Candidates:` block:** one line per `Line` in `result.lines`:
-  - `  {rank}. {san_of_first_move}   {score}  {pv_in_san}` where pv is first 4 half-moves joined by spaces with move numbers (e.g. `1. Nf6+ Kg8 2. Nxd7`)
+  - `  {rank}. {san_of_first_move}   {score}  {pv_in_san}` where pv is first 6 half-moves (3 full moves) joined with move numbers (e.g. `1. Nf6+ Kg8 2. Nxd7 Rxd7 3. Bxf6`); truncate if the line is shorter
 - **Blank line**
 - **`Motifs:` block:** one line per motif with confidence ≥ 0.5:
   - `  [{label} {confidence:.2f}]  {detail}`
@@ -112,10 +112,12 @@ usage: python -m analyse [-h] [--pgn FILE] [--lines N] [FEN | -]
 
 - Positional arg: FEN string, or `-` for stdin
 - `--pgn FILE`: read PGN from file
-- `--lines N`: number of candidate lines (default 5, must match `analyse()` default)
+- `--lines N`: number of candidate lines (default 5)
 - If both a positional FEN and `--pgn` are provided: `Error: cannot specify both FEN and --pgn\n` + exit 1
 
-Flow: `parse_input` → `engine.analyse` → `motifs.detect` → `explain.explain` → print
+Flow: `parse_input` → `engine.analyse(board, num_lines=args.lines)` → `motifs.detect` → `explain.explain` → print
+
+`__main__.py` always passes `num_lines` explicitly to `engine.analyse()`; the function's own default is a fallback for direct API callers only.
 
 ## Motif Detection Heuristics
 
@@ -123,23 +125,27 @@ Flow: `parse_input` → `engine.analyse` → `motifs.detect` → `explain.explai
 
 After simulating `best_move` on a board copy:
 - Get all squares attacked by the piece that just moved (`board.attacks(best_move.to_square)`)
-- Filter to enemy pieces worth ≥ knight (knight=3, bishop=3, rook=5, queen=9, king=∞)
+- If `best_move` is a promotion, the piece type on `best_move.to_square` is the promoted piece — use its attack set (correct behaviour; a queen-promotion fork is a fork)
+- Filter attacked squares to those containing enemy pieces worth ≥ knight (knight=3, bishop=3, rook=5, queen=9, king=∞)
 - If 2+ such squares: fork detected
 - `detail`: `"{san} attacks {sq1} ({piece1}) and {sq2} ({piece2})"`
 
 ### Pin (confidence 0.9)
 
-On the current board (before simulating best_move):
-- For each enemy piece that could legally recapture on `best_move.to_square`:
-  - Check `board.is_pinned(enemy_color, recapture_square)` — if True, that defender is pinned
-- If any pinned recapturer found: pin detected (the best move exploits the pin)
+Simulate `best_move` on a board copy, then:
+- Get all enemy pieces that attack `best_move.to_square` on the post-move board: `board_after.attackers(enemy_color, best_move.to_square)`
+- For each such attacker square `sq`: check `board_after.is_pinned(enemy_color, sq)` — if True, that defender is pinned and cannot legally recapture
+- If any pinned attacker found: pin detected (best move exploits an existing or newly-revealed pin)
 - `detail`: `"{piece} on {sq} is pinned and cannot recapture"`
 
 ### Skewer (confidence 0.85)
 
 After simulating `best_move`:
-- Get rays from `best_move.to_square` in all 8 directions using `chess.ray(from_sq, to_sq)`
-- For each ray, find the first enemy piece hit (`attacked_sq`) and the next piece on the same ray (`behind_sq`)
+- For each enemy piece square `attacked_sq` that `board_after.attacks(best_move.to_square)` covers:
+  - Get the ray bitboard: `ray_bb = chess.BB_RAYS[best_move.to_square][attacked_sq]`
+  - Mask to squares beyond `attacked_sq` on that ray (squares in `ray_bb` that are further from `best_move.to_square` than `attacked_sq`)
+  - Find the first piece on that masked ray (`behind_sq`)
+- If `piece_value(attacked_sq) > piece_value(behind_sq)` and `behind_sq` is also an enemy piece: skewer detected
 - If `piece_value(attacked_sq) > piece_value(behind_sq)` and `behind_sq` is also an enemy piece: skewer detected
 - `detail`: `"Attacks {high-value piece} on {sq}, skewering {lower piece} on {sq2}"`
 
@@ -197,7 +203,7 @@ Motifs:
   [hanging 0.80]  Bishop on c5 is undefended (0 defenders, 1 attacker)
 ```
 
-Scores always from White's perspective: `+N.NN` = White advantage, `-N.NN` = Black advantage, `#N` = mate in N (positive = White mates).
+Scores always from White's perspective: `+N.NN` = White advantage, `-N.NN` = Black advantage. Mate scores: `#N` where N > 0 = White delivers mate in N, `#-N` = Black delivers mate in N.
 
 ## Error Handling
 
