@@ -37,6 +37,7 @@ export async function mountPlay(app, navigate, positionId) {
           </div>
         </div>
         <div class="play-controls">
+          <button id="hint-btn" class="btn-secondary" disabled>Hint</button>
           <button id="resign-btn" class="btn-secondary">Resign</button>
           <button id="back-btn" class="btn-secondary">← Library</button>
         </div>
@@ -85,6 +86,7 @@ export async function mountPlay(app, navigate, positionId) {
   let workerReady = false
   let gameOver = false
   let engineMoving = false  // true when engine is making a move (vs just analyzing)
+  let hintMode = false      // true when waiting for engine's hint bestmove
 
   // --- Worker setup ---
   try {
@@ -110,6 +112,7 @@ export async function mountPlay(app, navigate, positionId) {
       if (cg && isUserTurn() && !gameOver) {
         cg.set({ movable: { color: userColor, dests: toDests(chess) } })
       }
+      updateHintBtn()
       return
     }
     if (type === 'error') { app.querySelector('#engine-banner').classList.remove('hidden'); return }
@@ -119,14 +122,33 @@ export async function mountPlay(app, navigate, positionId) {
     const parsed = parseStockfishLine(line)
     if (parsed) updateEvalBar(parsed)
 
-    // Engine move
+    // Engine move or hint
     if (line.startsWith('bestmove') && !gameOver) {
-      if (engineMoving) {
-        const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
-        if (match) applyEngineMove(match[1])
+      const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
+      if (hintMode && match) {
+        showHint(match[1])
+        hintMode = false
+      } else if (engineMoving && match) {
+        applyEngineMove(match[1])
       }
       engineMoving = false
     }
+  }
+
+  // --- Hint ---
+  function showHint(uciMove) {
+    const orig = uciMove.slice(0, 2)
+    const dest = uciMove.slice(2, 4)
+    cg.set({ drawable: { autoShapes: [{ orig, dest, brush: 'green' }] } })
+  }
+
+  function clearHint() {
+    cg.set({ drawable: { autoShapes: [] } })
+  }
+
+  function updateHintBtn() {
+    const btn = app.querySelector('#hint-btn')
+    btn.disabled = !workerReady || !isUserTurn() || gameOver || engineMoving
   }
 
   // --- Eval bar ---
@@ -233,6 +255,7 @@ export async function mountPlay(app, navigate, positionId) {
     // After engine moves, analyse user's position for the eval bar (no move applied)
     if (workerReady) {
       engineMoving = false
+      updateHintBtn()
       sendToEngine(`position fen ${chess.fen()}`)
       sendToEngine('go movetime 3000')
     }
@@ -257,6 +280,8 @@ export async function mountPlay(app, navigate, positionId) {
             const move = chess.move({ from: orig, to: dest, promotion: 'q' })
             if (!move) return
 
+            hintMode = false
+            clearHint()
             updateMoveHistory()
             cg.set({
               fen: chess.fen(),
@@ -270,6 +295,7 @@ export async function mountPlay(app, navigate, positionId) {
             // Trigger engine move
             if (workerReady) {
               engineMoving = true
+              updateHintBtn()
               sendToEngine('stop')
               sendToEngine(`position fen ${chess.fen()}`)
               sendToEngine('go movetime 3000')
@@ -313,6 +339,15 @@ export async function mountPlay(app, navigate, positionId) {
     })
   })
 
+  // --- Hint ---
+  app.querySelector('#hint-btn').addEventListener('click', () => {
+    if (!workerReady || !isUserTurn() || gameOver || engineMoving) return
+    hintMode = true
+    sendToEngine('stop')
+    sendToEngine(`position fen ${chess.fen()}`)
+    sendToEngine('go movetime 1000')
+  })
+
   // --- Resign ---
   app.querySelector('#resign-btn').addEventListener('click', () => {
     if (!gameOver) showResult('You resigned — Engine wins')
@@ -331,6 +366,7 @@ export async function mountPlay(app, navigate, positionId) {
   function startGame() {
     gameOver = false
     engineMoving = false
+    hintMode = false
     chess = new Chess(position.fen)
     updateMoveHistory()
     app.querySelector('#eval-fill').style.height = '50%'

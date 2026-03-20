@@ -312,6 +312,9 @@ body {
 
 /* Play controls */
 .play-controls { display: flex; flex-direction: column; gap: 6px; }
+#hint-btn { border-left: 3px solid #2ecc71; }
+#hint-btn:disabled { opacity: 0.4; cursor: default; }
+#hint-btn:disabled:hover { background: #0f3460; }
 
 /* Engine banner */
 .engine-banner {
