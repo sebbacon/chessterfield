@@ -379,8 +379,16 @@ body {
 .eval-bar-fill {
   width: 100%;
   background: #f0d9b5;
-  transition: height 0.3s ease;
+  transition: height 0.5s ease;
 }
+
+.eval-delta {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.eval-delta.positive { color: #2ecc71; }
+.eval-delta.negative { color: #e94560; }
 
 .engine-info {
   display: flex;

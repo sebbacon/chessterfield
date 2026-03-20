@@ -61,6 +61,7 @@ export async function mountPlay(app, navigate, positionId) {
         <div class="engine-info">
           <span id="engine-depth">depth —</span>
           <span id="engine-score">—</span>
+          <span id="eval-delta" class="eval-delta"></span>
         </div>
         <div class="move-history-wrap">
           <h3>Moves</h3>
@@ -91,6 +92,8 @@ export async function mountPlay(app, navigate, positionId) {
   let gameOver = false
   let engineMoving = false  // true when engine is making a move (vs just analyzing)
   let hintMode = false      // true when waiting for engine's hint bestmove
+  let pendingEval = null    // latest eval from info lines, committed on bestmove
+  let committedCp = null    // last committed cp (for delta calculation)
   let positionHistory = [{ fen: position.fen, lastMove: null }]
   let viewIndex = 0         // which position in positionHistory is displayed
 
@@ -124,12 +127,13 @@ export async function mountPlay(app, navigate, positionId) {
     if (type === 'error') { app.querySelector('#engine-banner').classList.remove('hidden'); return }
     if (type !== 'output') return
 
-    // Parse eval info
+    // Buffer eval info — committed on bestmove
     const parsed = parseStockfishLine(line)
-    if (parsed) updateEvalBar(parsed)
+    if (parsed) storePendingEval(parsed)
 
     // Engine move or hint
     if (line.startsWith('bestmove') && !gameOver) {
+      commitEval()
       const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
       if (hintMode && match) {
         showHint(match[1])
@@ -158,29 +162,48 @@ export async function mountPlay(app, navigate, positionId) {
   }
 
   // --- Eval bar ---
-  function updateEvalBar({ cp, mate, depth }) {
+  // Buffer incoming info lines; only update the bar on bestmove so the
+  // transition animates once from the previous committed position.
+  function storePendingEval({ cp, mate, depth }) {
+    app.querySelector('#engine-depth').textContent = `depth ${depth}`
+    pendingEval = { cp, mate }
+  }
+
+  function commitEval() {
+    if (!pendingEval) return
+    const { cp, mate } = pendingEval
+    pendingEval = null
+
     const fill = app.querySelector('#eval-fill')
-    const depthEl = app.querySelector('#engine-depth')
     const scoreEl = app.querySelector('#engine-score')
+    const deltaEl = app.querySelector('#eval-delta')
     const whiteLabel = app.querySelector('#eval-white-label')
     const blackLabel = app.querySelector('#eval-black-label')
 
-    depthEl.textContent = `depth ${depth}`
-
     if (mate !== null) {
-      const percent = mate > 0 ? 100 : 0
-      fill.style.height = percent + '%'
+      fill.style.height = (mate > 0 ? 100 : 0) + '%'
       const label = `M${Math.abs(mate)}`
       scoreEl.textContent = mate > 0 ? `+${label}` : `-${label}`
       whiteLabel.textContent = mate > 0 ? label : ''
       blackLabel.textContent = mate < 0 ? label : ''
+      deltaEl.textContent = ''
+      committedCp = null
     } else if (cp !== null) {
-      const percent = cpToPercent(cp)
-      fill.style.height = percent + '%'
+      fill.style.height = cpToPercent(cp) + '%'
       const display = cp > 0 ? `+${(cp / 100).toFixed(1)}` : (cp / 100).toFixed(1)
       scoreEl.textContent = display
       whiteLabel.textContent = cp > 0 ? display : ''
       blackLabel.textContent = cp < 0 ? display : ''
+
+      if (committedCp !== null) {
+        const delta = (cp - committedCp) / 100
+        const abs = Math.abs(delta).toFixed(1)
+        deltaEl.textContent = delta >= 0 ? `▲${abs}` : `▼${abs}`
+        deltaEl.className = `eval-delta ${delta >= 0 ? 'positive' : 'negative'}`
+      } else {
+        deltaEl.textContent = ''
+      }
+      committedCp = cp
     }
   }
 
@@ -433,6 +456,8 @@ export async function mountPlay(app, navigate, positionId) {
     gameOver = false
     engineMoving = false
     hintMode = false
+    pendingEval = null
+    committedCp = null
     positionHistory = [{ fen: position.fen, lastMove: null }]
     viewIndex = 0
     chess = new Chess(position.fen)
@@ -440,6 +465,7 @@ export async function mountPlay(app, navigate, positionId) {
     app.querySelector('#eval-fill').style.height = '50%'
     app.querySelector('#engine-depth').textContent = 'depth —'
     app.querySelector('#engine-score').textContent = '—'
+    app.querySelector('#eval-delta').textContent = ''
     app.querySelector('#eval-white-label').textContent = ''
     app.querySelector('#eval-black-label').textContent = ''
 
