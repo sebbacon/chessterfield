@@ -60,7 +60,7 @@ def analyse(board: chess.Board, num_lines: int = 5) -> EngineResult:
     """Run Stockfish and return top N lines with evals."""
 ```
 
-Uses the `stockfish` pip package. Raises `RuntimeError` with install hint if binary not found.
+Uses `chess.engine.SimpleEngine.popen_uci()` from python-chess to communicate with the Stockfish binary via UCI. The `stockfish` pip package is used only to locate the binary path (`stockfish.Stockfish().get_stockfish_parameters()["stockfish_path"]`); all engine communication uses `chess.engine.Score`. Raises `RuntimeError` with install hint if Stockfish binary not found.
 
 ### motifs.py
 
@@ -93,13 +93,16 @@ usage: python -m analyse [-h] [--pgn FILE] [--lines N] [FEN | -]
 - Positional arg: FEN string, or `-` for stdin
 - `--pgn FILE`: read PGN from file
 - `--lines N`: number of candidate lines (default 5)
+- If both a positional FEN and `--pgn` are provided: `Error: cannot specify both FEN and --pgn\n` + exit 1
+
+`eval_before` is obtained from a single multiline analysis call (Stockfish reports the score of the root position as part of its analysis); no second engine call is needed.
 
 ## Motif Detection Heuristics
 
 | Motif | Detection logic |
 |-------|----------------|
 | **Fork** | After simulating best_move: moving piece attacks 2+ enemy pieces worth ≥ knight |
-| **Pin** | A piece is on a ray between an attacker and a more-valuable piece; `board.is_pinned()` |
+| **Pin** | A defending piece is pinned (cannot legally move without exposing a more-valuable piece behind it); detected when `board.is_pinned()` is true for an enemy piece that would otherwise recapture — i.e. a pin the moving side is *exploiting* |
 | **Skewer** | A high-value piece is attacked on a ray; a lower-value piece sits behind it on the same ray |
 | **Discovered attack** | Moving a piece reveals a ray attack from a piece behind it (check `attackers()` before/after) |
 | **Mate threat** | Engine score is `Mate` in N moves |
@@ -151,9 +154,11 @@ analyse *args:
 
 ## Testing Strategy
 
+Tests live in `tests/analyse/`. The existing `pytest.ini` at the project root discovers `tests/` automatically; add `tests/analyse/__init__.py` to make it a package.
+
 - **test_parse.py** — FEN/PGN round-trips, invalid input raises `ValueError`
 - **test_motifs.py** — known tactical positions for each motif; e.g. classic Knight fork position detects `fork`, Legall's Mate setup detects `pin`
-- **test_engine.py** — mock `stockfish.Stockfish`, verify `EngineResult` structure and score parsing
+- **test_engine.py** — mock `chess.engine.SimpleEngine`, verify `EngineResult` structure and score parsing
 - **test_explain.py** — snapshot/string-contains tests for output format with known inputs
 
 ## What Is Not In Scope
