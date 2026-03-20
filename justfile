@@ -19,11 +19,17 @@ django:
 vite:
     cd frontend && npm run dev
 
-# Run both servers with hot reload (open two terminals)
+# Run both servers with hot reload in tmux split panes
 dev:
-    @echo "Open two terminals and run:"
-    @echo "  just vite"
-    @echo "  DJANGO_VITE_DEV_MODE=true just django"
+    #!/usr/bin/env bash
+    if [ -n "$TMUX" ]; then
+        tmux split-window -h "DJANGO_VITE_DEV_MODE=true just django; echo 'Press enter to close...'; read"
+        just vite
+    else
+        tmux new-session -d -s chessterfield "just vite; echo 'Press enter to close...'; read"
+        tmux split-window -h -t chessterfield "DJANGO_VITE_DEV_MODE=true just django; echo 'Press enter to close...'; read"
+        tmux attach -t chessterfield
+    fi
 
 # Run all tests (backend + frontend)
 test: test-backend test-frontend
@@ -44,3 +50,7 @@ smoke:
 build:
     cd frontend && npm run build
     cp frontend/node_modules/stockfish/src/stockfish-nnue-16-single.wasm frontend/dist/assets/
+
+# Import games from Lichess (--max-games N to limit)
+import-lichess *args:
+    .venv/bin/python manage.py import_lichess {{args}}
