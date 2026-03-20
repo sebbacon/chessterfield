@@ -64,6 +64,9 @@ class Command(BaseCommand):
             color = "white"
             opponent = players.get("black", {}).get("user", {}).get("name", "unknown")
         else:
+            black_name = players.get("black", {}).get("user", {}).get("name", "")
+            if black_name.lower() != username.lower():
+                self.stderr.write(f"Warning: username '{username}' not found in game {game_id} players, assuming black.")
             color = "black"
             opponent = players.get("white", {}).get("user", {}).get("name", "unknown")
 

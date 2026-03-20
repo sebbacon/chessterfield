@@ -64,7 +64,7 @@ def test_import_sets_tags():
 @pytest.mark.django_db
 def test_import_skips_existing():
     Position.objects.create(
-        name="existing", fen=STARTING_FEN, source="lichess:testgame1:0"
+        name="existing", fen=STARTING_FEN, notes="", source="lichess:testgame1:0"
     )
     with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
         mock_get.return_value = _make_mock_response([FAKE_GAME])
@@ -87,7 +87,7 @@ def test_import_max_games():
 
 
 @pytest.mark.django_db
-def test_import_http_error(capsys):
+def test_import_http_error():
     with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
         mock_get.return_value = _make_mock_response([], status_code=500)
         with pytest.raises(CommandError):
@@ -97,7 +97,7 @@ def test_import_http_error(capsys):
 
 
 @pytest.mark.django_db
-def test_import_rate_limited(capsys):
+def test_import_rate_limited():
     with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
         mock_get.return_value = _make_mock_response([], status_code=429)
         with pytest.raises(CommandError):
