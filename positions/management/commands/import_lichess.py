@@ -1,10 +1,9 @@
 import json
-from datetime import datetime, timezone
 
-import chess
 import requests
 from django.core.management.base import BaseCommand, CommandError
 
+from positions.lichess import build_plies, lichess_context, lichess_date, sync_game_summary
 from positions.models import Position, Tag
 
 
@@ -54,38 +53,19 @@ class Command(BaseCommand):
 
     def _import_game(self, game, username):
         game_id = game.get("id", "unknown")
-        moves_str = game.get("moves", "")
-        created_at_ms = game.get("createdAt", 0)
-        date = datetime.fromtimestamp(created_at_ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
-
+        played_at = lichess_date(game)
+        date = played_at.strftime("%Y-%m-%d")
+        color, opponent = lichess_context(game, username)
         players = game.get("players", {})
+        black_name = players.get("black", {}).get("user", {}).get("name", "")
         white_name = players.get("white", {}).get("user", {}).get("name", "")
-        if white_name.lower() == username.lower():
-            color = "white"
-            opponent = players.get("black", {}).get("user", {}).get("name", "unknown")
-        else:
-            black_name = players.get("black", {}).get("user", {}).get("name", "")
-            if black_name.lower() != username.lower():
-                self.stderr.write(f"Warning: username '{username}' not found in game {game_id} players, assuming black.")
-            color = "black"
-            opponent = players.get("white", {}).get("user", {}).get("name", "unknown")
+        if white_name.lower() != username.lower() and black_name.lower() != username.lower():
+            self.stderr.write(f"Warning: username '{username}' not found in game {game_id} players, assuming black.")
 
         lichess_tag, _ = Tag.objects.get_or_create(name="lichess")
         color_tag, _ = Tag.objects.get_or_create(name=color)
-
-        board = chess.Board()
-        plies = [(0, board.fen())]
-
-        for move_str in (moves_str.split() if moves_str else []):
-            try:
-                board.push_uci(move_str)
-            except (chess.InvalidMoveError, chess.IllegalMoveError, ValueError):
-                try:
-                    board.push_san(move_str)
-                except Exception:
-                    self.stderr.write(f"Bad move '{move_str}' in game {game_id}, stopping.")
-                    break
-            plies.append((len(plies), board.fen()))
+        plies = build_plies(game, self.stderr.write)
+        sync_game_summary(game, username, plies[-1][1])
 
         created = skipped = 0
         existing_sources = set(

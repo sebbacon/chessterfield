@@ -1,6 +1,6 @@
 import pytest
 from django.db import IntegrityError
-from positions.models import Position, Tag
+from positions.models import Game, Position, Tag
 
 @pytest.mark.django_db
 def test_create_tag():
@@ -18,6 +18,22 @@ def test_create_position():
     assert pos.name == 'Sicilian Najdorf'
     assert pos.tags.count() == 0
     assert str(pos) == 'Sicilian Najdorf'
+
+
+@pytest.mark.django_db
+def test_create_game():
+    game = Game.objects.create(
+        name='vs opponent (2026-03-20)',
+        opponent='opponent',
+        played_at='2026-03-20T12:00:00Z',
+        final_fen='rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        user_color='white',
+        winner='white',
+        status='mate',
+        source='lichess:testgame1',
+    )
+    assert game.opponent == 'opponent'
+    assert str(game) == 'vs opponent (2026-03-20)'
 
 @pytest.mark.django_db
 def test_position_tags_many_to_many():
@@ -70,3 +86,28 @@ def test_position_source_multiple_null_allowed():
     Position.objects.create(name='A', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     Position.objects.create(name='B', fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
     assert Position.objects.filter(source__isnull=True).count() == 2
+
+
+@pytest.mark.django_db
+def test_game_source_unique():
+    Game.objects.create(
+        name='vs A (2026-03-20)',
+        opponent='A',
+        played_at='2026-03-20T12:00:00Z',
+        final_fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        user_color='white',
+        winner='draw',
+        status='draw',
+        source='lichess:abc123',
+    )
+    with pytest.raises(IntegrityError):
+        Game.objects.create(
+            name='vs B (2026-03-20)',
+            opponent='B',
+            played_at='2026-03-20T12:00:00Z',
+            final_fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+            user_color='black',
+            winner='black',
+            status='mate',
+            source='lichess:abc123',
+        )

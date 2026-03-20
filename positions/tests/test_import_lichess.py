@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from positions.models import Position, Tag
+from positions.models import Game, Position, Tag
 
 
 FAKE_GAME = {
@@ -13,6 +13,8 @@ FAKE_GAME = {
         "white": {"user": {"name": "sebbacon"}},
         "black": {"user": {"name": "opponent"}},
     },
+    "winner": "white",
+    "status": "mate",
     "moves": "e2e4 e7e5 g1f3",
 }
 
@@ -59,6 +61,42 @@ def test_import_sets_tags():
     tag_names = set(pos.tags.values_list("name", flat=True))
     assert "lichess" in tag_names
     assert "white" in tag_names  # sebbacon played white
+
+
+@pytest.mark.django_db
+def test_import_creates_game_summary():
+    with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
+        mock_get.return_value = _make_mock_response([FAKE_GAME])
+        call_command("import_lichess")
+
+    game = Game.objects.get(source="lichess:testgame1")
+    assert game.name == "vs opponent (2023-11-14)"
+    assert game.user_color == "white"
+    assert game.winner == "white"
+    assert game.status == "mate"
+    assert game.final_fen == Position.objects.get(source="lichess:testgame1:3").fen
+
+
+@pytest.mark.django_db
+def test_import_updates_existing_game_summary():
+    Game.objects.create(
+        name="old",
+        opponent="old",
+        played_at="2023-11-14T00:00:00Z",
+        final_fen=STARTING_FEN,
+        user_color="black",
+        winner="black",
+        status="resign",
+        source="lichess:testgame1",
+    )
+    with patch("positions.management.commands.import_lichess.requests.get") as mock_get:
+        mock_get.return_value = _make_mock_response([FAKE_GAME])
+        call_command("import_lichess")
+
+    game = Game.objects.get(source="lichess:testgame1")
+    assert game.opponent == "opponent"
+    assert game.user_color == "white"
+    assert game.winner == "white"
 
 
 @pytest.mark.django_db

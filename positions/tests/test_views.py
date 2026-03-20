@@ -1,7 +1,7 @@
 import json
 import pytest
 from django.test import Client
-from positions.models import Position, Tag
+from positions.models import Game, Position, Tag
 
 
 @pytest.fixture
@@ -21,6 +21,20 @@ def position(db):
 @pytest.fixture
 def tag(db):
     return Tag.objects.create(name='opening')
+
+
+@pytest.fixture
+def game(db):
+    return Game.objects.create(
+        name='vs opponent (2026-03-20)',
+        opponent='opponent',
+        played_at='2026-03-20T12:00:00Z',
+        final_fen='rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+        user_color='white',
+        winner='white',
+        status='mate',
+        source='lichess:testgame1',
+    )
 
 
 # --- GET /api/positions/ ---
@@ -165,3 +179,26 @@ def test_list_tags(client, tag):
     assert r.status_code == 200
     data = json.loads(r.content)
     assert any(t['name'] == 'opening' for t in data)
+
+
+# --- GET /api/games/ ---
+
+@pytest.mark.django_db
+def test_list_games_empty(client):
+    r = client.get('/api/games/')
+    assert r.status_code == 200
+    data = json.loads(r.content)
+    assert data['results'] == []
+    assert data['count'] == 0
+
+
+@pytest.mark.django_db
+def test_list_games_returns_game_summaries(client, game):
+    r = client.get('/api/games/')
+    assert r.status_code == 200
+    data = json.loads(r.content)
+    assert data['count'] == 1
+    assert data['results'][0]['name'] == 'vs opponent (2026-03-20)'
+    assert data['results'][0]['fen'] == 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2'
+    assert data['results'][0]['result_label'] == 'You won'
+    assert data['results'][0]['winner_label'] == 'White won'

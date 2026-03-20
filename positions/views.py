@@ -1,7 +1,7 @@
 import json
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
-from .models import Position, Tag
+from .models import Game, Position, Tag
 
 
 def _position_to_dict(pos):
@@ -15,6 +15,43 @@ def _position_to_dict(pos):
     }
 
 
+def _game_result_label(game):
+    if game.winner == 'draw':
+        return 'Draw'
+    if game.winner in {'white', 'black'}:
+        if game.winner == game.user_color:
+            return 'You won'
+        return f'{game.opponent} won'
+    if game.status == 'aborted':
+        return 'Aborted'
+    return 'Result unavailable'
+
+
+def _game_winner_label(game):
+    if game.winner == 'draw':
+        return 'Draw'
+    if game.winner == 'white':
+        return 'White won'
+    if game.winner == 'black':
+        return 'Black won'
+    return 'Winner unknown'
+
+
+def _game_to_dict(game):
+    return {
+        'id': game.id,
+        'name': game.name,
+        'opponent': game.opponent,
+        'fen': game.final_fen,
+        'played_at': game.played_at.isoformat(),
+        'user_color': game.user_color,
+        'winner': game.winner,
+        'winner_label': _game_winner_label(game),
+        'result_label': _game_result_label(game),
+        'status': game.status,
+    }
+
+
 def _apply_tags(position, tag_names):
     """Replace position's tag set with the given list of tag names."""
     tags = [Tag.objects.get_or_create(name=n.strip())[0] for n in tag_names if n.strip()]
@@ -22,6 +59,13 @@ def _apply_tags(position, tag_names):
 
 
 PAGE_SIZE = 48
+
+
+def _get_page_num(request):
+    try:
+        return int(request.GET.get('page', 1))
+    except (ValueError, TypeError):
+        return 1
 
 
 @require_http_methods(['GET', 'POST'])
@@ -33,11 +77,7 @@ def positions_list(request):
         if tag_filters:
             qs = qs.filter(tags__name__in=tag_filters).distinct()
         paginator = Paginator(qs, PAGE_SIZE)
-        try:
-            page_num = int(request.GET.get('page', 1))
-        except (ValueError, TypeError):
-            page_num = 1
-        page = paginator.get_page(page_num)
+        page = paginator.get_page(_get_page_num(request))
         return JsonResponse({
             'results': [_position_to_dict(p) for p in page],
             'count': paginator.count,
@@ -88,6 +128,20 @@ def positions_detail(request, pk):
     # DELETE
     pos.delete()
     return HttpResponse(status=204, content_type='application/json')
+
+
+@require_http_methods(['GET'])
+def games_list(request):
+    from django.core.paginator import Paginator
+
+    paginator = Paginator(Game.objects.all(), PAGE_SIZE)
+    page = paginator.get_page(_get_page_num(request))
+    return JsonResponse({
+        'results': [_game_to_dict(g) for g in page],
+        'count': paginator.count,
+        'page': page.number,
+        'total_pages': paginator.num_pages,
+    })
 
 
 @require_http_methods(['GET'])
