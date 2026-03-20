@@ -17,6 +17,7 @@ class Position(models.Model):
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     tags = models.ManyToManyField(Tag, blank=True)
+    source = models.CharField(max_length=100, null=True, blank=True, unique=True)
 
     def __str__(self):
         return self.name

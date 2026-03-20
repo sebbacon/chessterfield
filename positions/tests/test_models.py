@@ -44,3 +44,29 @@ def test_position_ordered_newest_first():
     qs = list(Position.objects.all())
     assert qs[0] == pos2  # newest first
     assert qs[1] == pos1
+
+@pytest.mark.django_db
+def test_position_source_nullable():
+    pos = Position.objects.create(
+        name='Test', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+    )
+    assert pos.source is None
+
+@pytest.mark.django_db
+def test_position_source_unique():
+    Position.objects.create(
+        name='A', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        source='lichess:abc123:0'
+    )
+    with pytest.raises(IntegrityError):
+        Position.objects.create(
+            name='B', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+            source='lichess:abc123:0'
+        )
+
+@pytest.mark.django_db
+def test_position_source_multiple_null_allowed():
+    """Multiple positions with source=None must be allowed (unique only applies to non-null)."""
+    Position.objects.create(name='A', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+    Position.objects.create(name='B', fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
+    assert Position.objects.filter(source__isnull=True).count() == 2
