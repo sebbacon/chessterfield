@@ -74,9 +74,15 @@ def positions_list(request):
     if request.method == 'GET':
         from django.core.paginator import Paginator
         qs = Position.objects.all()
-        tag_filters = request.GET.getlist('tag')
+        tag_filters = []
+        for tag in request.GET.getlist('tag'):
+            cleaned = tag.strip()
+            if cleaned and cleaned not in tag_filters:
+                tag_filters.append(cleaned)
         if tag_filters:
-            qs = qs.filter(tags__name__in=tag_filters).distinct()
+            for tag in tag_filters:
+                qs = qs.filter(tags__name=tag)
+            qs = qs.distinct()
         paginator = Paginator(qs, PAGE_SIZE)
         page = paginator.get_page(_get_page_num(request))
         return JsonResponse({

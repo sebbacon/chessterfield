@@ -80,7 +80,7 @@ def test_list_positions_returns_positions(client, position):
 
 
 @pytest.mark.django_db
-def test_list_positions_tag_filter_or_logic(client):
+def test_list_positions_tag_filter_and_logic(client):
     t1 = Tag.objects.create(name='opening')
     t2 = Tag.objects.create(name='endgame')
     t3 = Tag.objects.create(name='tactics')
@@ -88,12 +88,19 @@ def test_list_positions_tag_filter_or_logic(client):
     p2 = Position.objects.create(name='P2', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     p3 = Position.objects.create(name='P3', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     p1.tags.add(t1)
-    p2.tags.add(t2)
+    p2.tags.add(t1, t2)
     p3.tags.add(t3)
     r = client.get('/api/positions/?tag=opening&tag=endgame')
     data = json.loads(r.content)
     names = {d['name'] for d in data['results']}
-    assert names == {'P1', 'P2'}
+    assert names == {'P2'}
+
+
+@pytest.mark.django_db
+def test_tagged_positions_url_serves_spa(client):
+    r = client.get('/tags/opening+endgame/')
+    assert r.status_code == 200
+    assert b'<div id="app"></div>' in r.content
 
 
 # --- POST /api/positions/ ---

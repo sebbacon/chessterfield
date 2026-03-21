@@ -13,16 +13,26 @@ export const DEFAULT_STATE = {
 }
 
 
-export function parseUrlState(search = window.location.search) {
+const TAG_PATH_PREFIX = '/tags/'
+
+
+export function parseUrlState(pathname = window.location.pathname, search = window.location.search) {
+  if (pathname.startsWith('?')) {
+    search = pathname
+    pathname = '/'
+  }
+
   const params = new URLSearchParams(search)
   const view = ['library', 'import', 'play'].includes(params.get('view')) ? params.get('view') : 'library'
 
   const mode = params.get('mode') === 'games' ? 'games' : 'positions'
   const page = clampPositiveInt(params.get('page'), 1)
-  const tags = (params.get('tags') || '')
+  const queryTags = (params.get('tags') || '')
     .split(',')
     .map(t => t.trim())
     .filter(Boolean)
+  const pathTags = parseTagPath(pathname)
+  const tags = pathTags.length > 0 ? pathTags : queryTags
 
   const item = params.get('item')
   const ply = params.get('ply')
@@ -44,8 +54,8 @@ export function parseUrlState(search = window.location.search) {
 }
 
 
-export function buildUrlFromState(state, base = window.location.pathname) {
-  const url = new URL(base, window.location.origin)
+export function buildUrlFromState(state) {
+  const url = new URL(buildBasePath(state), window.location.origin)
   const params = url.searchParams
 
   if (state.view !== 'library') params.set('view', state.view)
@@ -53,7 +63,9 @@ export function buildUrlFromState(state, base = window.location.pathname) {
   if (state.view === 'library') {
     if (state.library.mode === 'games') params.set('mode', 'games')
     if (state.library.page > 1) params.set('page', String(state.library.page))
-    if (state.library.tags.length > 0) params.set('tags', state.library.tags.join(','))
+    if (state.library.mode !== 'positions' && state.library.tags.length > 0) {
+      params.set('tags', state.library.tags.join(','))
+    }
   }
 
   if (state.view === 'play' && state.itemId !== null) {
@@ -65,6 +77,32 @@ export function buildUrlFromState(state, base = window.location.pathname) {
   }
 
   return url.pathname + (params.toString() ? `?${params.toString()}` : '')
+}
+
+
+function buildBasePath(state) {
+  if (state.view === 'library' && state.library.mode === 'positions' && state.library.tags.length > 0) {
+    return `${TAG_PATH_PREFIX}${encodeTagPath(state.library.tags)}/`
+  }
+  return '/'
+}
+
+
+function parseTagPath(pathname) {
+  if (!pathname.startsWith(TAG_PATH_PREFIX)) return []
+  const raw = pathname.slice(TAG_PATH_PREFIX.length).replace(/\/$/, '')
+  if (!raw) return []
+  return raw.split('+').map(part => decodeURIComponent(part)).filter(Boolean)
+}
+
+
+function encodeTagPath(tags) {
+  return [...tags]
+    .map(tag => tag.trim())
+    .filter(Boolean)
+    .sort()
+    .map(tag => encodeURIComponent(tag))
+    .join('+')
 }
 
 
