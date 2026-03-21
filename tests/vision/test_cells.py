@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from vision.cells import extract_cells, write_result
 
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "puzzle_pages"
+HAS_TESSERACT = shutil.which("tesseract") is not None
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,30 @@ def test_write_result_creates_manifest_and_crops(tmp_path: Path) -> None:
     assert len(manifest["cells"]) == len(result.cells)
     assert manifest["cells"][0]["marker"] in {"black", "white"}
     assert Path(manifest["cells"][0]["marker_crop_path"]).exists()
+    assert "set_name" in manifest
+    assert "title_en" in manifest
+
+
+@pytest.mark.skipif(not HAS_TESSERACT, reason="tesseract not installed")
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_set", "expected_title"),
+    [
+        ("page-sample-1.jpg", "A", "X-ray check or attack"),
+        ("sample-2.JPG", "B", "X-ray check or attack"),
+        ("sample-3.JPG", "B", "Trapping"),
+        ("sample-4.JPG", "C", None),
+    ],
+)
+def test_extract_cells_emits_header_metadata(
+    fixture_name: str,
+    expected_set: str,
+    expected_title: str | None,
+) -> None:
+    _page_image, result = extract_cells(FIXTURE_DIR / fixture_name)
+
+    assert result.set_name == expected_set
+    assert result.ocr_engine == "tesseract"
+    assert result.title_en == expected_title
 
 
 def test_exported_cell_crop_excludes_marker_margin(tmp_path: Path) -> None:

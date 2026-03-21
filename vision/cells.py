@@ -12,6 +12,8 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
+from vision.header import extract_header_metadata
+
 RIGHT_MARGIN_RATIO = 0.125
 
 
@@ -46,6 +48,9 @@ class ExtractionResult:
     detected_boards: int
     rows: int
     columns: int
+    set_name: str | None
+    title_en: str | None
+    ocr_engine: str | None
     cells: list[CellCandidate]
 
 
@@ -361,6 +366,7 @@ def extract_cells(image_path: str | Path) -> tuple[np.ndarray, ExtractionResult]
         page,
         _expand_right_margin(infer_cells(boards, page.shape), page.shape[1]),
     )
+    header_metadata = extract_header_metadata(page, cells)
     result = ExtractionResult(
         image_path=str(path),
         normalized_width=page.shape[1],
@@ -368,6 +374,9 @@ def extract_cells(image_path: str | Path) -> tuple[np.ndarray, ExtractionResult]
         detected_boards=len(boards),
         rows=len({cell.row for cell in cells}),
         columns=max((cell.column + cell.column_span for cell in cells), default=0),
+        set_name=header_metadata.set_name,
+        title_en=header_metadata.title_en,
+        ocr_engine=header_metadata.ocr_engine,
         cells=cells,
     )
     return page, result
