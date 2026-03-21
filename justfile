@@ -53,7 +53,7 @@ smoke: build
         print(sock.getsockname()[1])
     PY
     )
-    cd frontend && PLAYWRIGHT_PORT="$PORT" PLAYWRIGHT_CHANNEL="${PLAYWRIGHT_CHANNEL:-chrome}" PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
+    cd frontend && PLAYWRIGHT_PORT="$PORT" PLAYWRIGHT_CHANNEL="${PLAYWRIGHT_CHANNEL:-chromium}" PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
 
 # Build frontend for production
 build:

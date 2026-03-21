@@ -1,5 +1,5 @@
 /**
- * Smoke tests against a live Django server (port 8001).
+ * Smoke tests against a Playwright-managed Django server.
  * Run: just smoke  (requires: just build first)
  */
 import { test, expect } from '@playwright/test'
