@@ -1,6 +1,7 @@
 import json
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
+from .lichess import build_game_history
 from .models import Game, Position, Tag
 
 
@@ -151,7 +152,9 @@ def games_detail(request, pk):
     except Game.DoesNotExist:
         return JsonResponse({'error': 'Not found'}, status=404)
 
-    return JsonResponse(_game_to_dict(game))
+    data = _game_to_dict(game)
+    data['history'] = build_game_history(game)
+    return JsonResponse(data)
 
 
 @require_http_methods(['GET'])

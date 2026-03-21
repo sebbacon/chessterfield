@@ -32,6 +32,8 @@ function makeApp() {
 }
 
 const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+const AFTER_E4_FEN = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1'
+const AFTER_E4_E5_FEN = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2'
 
 function mockPosition(fen = STARTING_FEN) {
   vi.stubGlobal('fetch', vi.fn(() =>
@@ -45,11 +47,13 @@ describe('Play view game loop', () => {
   let app
   let mockWorker
   let navigate
+  let syncState
   let cgMock  // the cg instance returned by the mocked Chessground
 
   beforeEach(() => {
     app = makeApp()
     navigate = vi.fn()
+    syncState = vi.fn()
     capturedCgConfig = null
 
     // Stub Worker: record postMessage calls; expose onmessage setter for test control
@@ -72,7 +76,7 @@ describe('Play view game loop', () => {
   })
 
   it('sends stop + position + go to engine after user move', async () => {
-    await mountPlay(app, navigate, 1)
+    await mountPlay(app, navigate, 1, {}, syncState)
     cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
 
     // Signal engine ready
@@ -88,7 +92,7 @@ describe('Play view game loop', () => {
   })
 
   it('applies engine bestmove to the board after user move', async () => {
-    await mountPlay(app, navigate, 1)
+    await mountPlay(app, navigate, 1, {}, syncState)
     cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
 
     mockWorker.onmessage({ data: { type: 'ready' } })
@@ -105,7 +109,7 @@ describe('Play view game loop', () => {
   })
 
   it('board starts disabled and enables only after engine ready', async () => {
-    await mountPlay(app, navigate, 1)
+    await mountPlay(app, navigate, 1, {}, syncState)
     const cgMockInstance = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
 
     // Board should start with no legal moves (disabled while engine loads)
@@ -117,24 +121,49 @@ describe('Play view game loop', () => {
     expect(lastSet?.movable?.dests).not.toEqual(new Map())
   })
 
-  it('can open a game at its final position', async () => {
+  it('can open a game at its final position and step through history', async () => {
     vi.stubGlobal('fetch', vi.fn(() =>
       Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
           id: 2,
           name: 'vs opponent (2026-03-20)',
-          fen: STARTING_FEN,
+          fen: AFTER_E4_E5_FEN,
           user_color: 'white',
           result_label: 'You won',
+          history: [
+            { fen: STARTING_FEN, last_move: null, move_san: null },
+            { fen: AFTER_E4_FEN, last_move: ['e2', 'e4'], move_san: 'e4' },
+            { fen: AFTER_E4_E5_FEN, last_move: ['e7', 'e5'], move_san: 'e5' },
+          ],
         }),
       })
     ))
 
-    await mountPlay(app, navigate, 'game:2')
+    await mountPlay(app, navigate, 'game:2', {}, syncState)
+    cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
 
     expect(fetch).toHaveBeenCalledWith('/api/games/2/')
     expect(app.textContent).toContain('vs opponent (2026-03-20) — Final Position')
     expect(app.textContent).toContain('You won')
+    expect(app.querySelector('#move-history').textContent).toContain('e4')
+    expect(app.querySelector('#move-history').textContent).toContain('e5')
+    expect(app.querySelector('#back-move-btn').disabled).toBe(false)
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    let sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain(`position fen ${AFTER_E4_E5_FEN}`)
+    expect(sentCmds).toContain('go movetime 1000')
+
+    app.querySelector('#back-move-btn').click()
+
+    const lastCall = cgMock.set.mock.calls.at(-1)?.[0]
+    expect(lastCall?.fen).toBe(AFTER_E4_FEN)
+
+    sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain(`position fen ${AFTER_E4_FEN}`)
+    expect(syncState).toHaveBeenCalledWith({
+      play: { ply: 1, side: 'white' },
+    }, { replace: false })
   })
 })

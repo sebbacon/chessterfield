@@ -1,6 +1,6 @@
 import { fenToMiniBoard } from '../chess/miniboard.js'
 
-export async function mountLibrary(app, navigate) {
+export async function mountLibrary(app, navigate, initialState = {}, syncState = () => {}) {
   app.innerHTML = `
     <div class="library-layout">
       <aside class="sidebar">
@@ -29,12 +29,12 @@ export async function mountLibrary(app, navigate) {
   app.querySelector('#go-import').addEventListener('click', () => navigate('import'))
 
   const pages = {
-    positions: { current: 1, total: 1 },
-    games: { current: 1, total: 1 },
+    positions: { current: initialState.mode === 'positions' ? (initialState.page || 1) : 1, total: 1 },
+    games: { current: initialState.mode === 'games' ? (initialState.page || 1) : 1, total: 1 },
   }
   let allTags = []
-  let mode = 'positions'
-  let selectedTags = new Set()
+  let mode = initialState.mode === 'games' ? 'games' : 'positions'
+  let selectedTags = new Set(initialState.tags || [])
   let requestSeq = 0
 
   app.querySelector('#show-positions').addEventListener('click', () => switchMode('positions'))
@@ -56,6 +56,7 @@ export async function mountLibrary(app, navigate) {
     mode = nextMode
     pages[mode].current = 1
     updateModeUi()
+    syncLibraryState()
     loadCurrent(true)
   }
 
@@ -91,6 +92,7 @@ export async function mountLibrary(app, navigate) {
         if (cb.checked) selectedTags.add(cb.value)
         else selectedTags.delete(cb.value)
         pages.positions.current = 1
+        syncLibraryState()
         if (mode === 'positions') loadPositions(true)
         renderTags()
       })
@@ -169,13 +171,17 @@ export async function mountLibrary(app, navigate) {
 
   function bindPlayButtons(container) {
     container.querySelectorAll('.play-btn').forEach(btn => {
-      btn.addEventListener('click', () => navigate('play', parseInt(btn.dataset.id)))
+      btn.addEventListener('click', () => navigate('play', parseInt(btn.dataset.id), {
+        play: { ply: 0, side: 'white' },
+      }))
     })
   }
 
   function bindOpenGameButtons(container) {
     container.querySelectorAll('.open-game-btn').forEach(btn => {
-      btn.addEventListener('click', () => navigate('play', `game:${btn.dataset.id}`))
+      btn.addEventListener('click', () => navigate('play', `game:${btn.dataset.id}`, {
+        play: { ply: null, side: 'white' },
+      }))
     })
   }
 
@@ -225,11 +231,27 @@ export async function mountLibrary(app, navigate) {
     if (!btn) return
     btn.addEventListener('click', () => {
       pages[mode].current++
+      syncLibraryState()
       loadCurrent(false)
     })
   }
 
+  function syncLibraryState(replace = false) {
+    syncState({
+      library: {
+        mode,
+        page: pages[mode].current,
+        tags: [...selectedTags].sort(),
+      },
+      play: {
+        ply: null,
+        side: 'white',
+      },
+    }, { replace })
+  }
+
   updateModeUi()
+  syncLibraryState(true)
   await Promise.all([loadTags(), loadCurrent()])
 }
 

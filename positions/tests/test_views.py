@@ -37,6 +37,27 @@ def game(db):
     )
 
 
+@pytest.fixture
+def game_positions(db):
+    return [
+        Position.objects.create(
+            name='vs opponent (2026-03-20) ply 0',
+            fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+            source='lichess:testgame1:0',
+        ),
+        Position.objects.create(
+            name='vs opponent (2026-03-20) ply 1',
+            fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+            source='lichess:testgame1:1',
+        ),
+        Position.objects.create(
+            name='vs opponent (2026-03-20) ply 2',
+            fen='rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+            source='lichess:testgame1:2',
+        ),
+    ]
+
+
 # --- GET /api/positions/ ---
 
 @pytest.mark.django_db
@@ -205,10 +226,13 @@ def test_list_games_returns_game_summaries(client, game):
 
 
 @pytest.mark.django_db
-def test_get_game_detail(client, game):
+def test_get_game_detail(client, game, game_positions):
     r = client.get(f'/api/games/{game.id}/')
     assert r.status_code == 200
     data = json.loads(r.content)
     assert data['id'] == game.id
     assert data['name'] == 'vs opponent (2026-03-20)'
     assert data['result_label'] == 'You won'
+    assert len(data['history']) == 3
+    assert data['history'][1]['move_san'] == 'e4'
+    assert data['history'][2]['move_san'] == 'e5'

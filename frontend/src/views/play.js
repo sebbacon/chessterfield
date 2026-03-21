@@ -7,17 +7,27 @@ import 'chessground/assets/chessground.base.css'
 import 'chessground/assets/chessground.brown.css'
 import 'chessground/assets/chessground.cburnett.css'
 
-export async function mountPlay(app, navigate, itemId) {
+export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}) {
   // --- Fetch position or game-end data ---
   let position
   const isGame = typeof itemId === 'string' && itemId.startsWith('game:')
+  let browseOnly = isGame
+  let initialHistory = null
+  let initialUserColor = initialPlayState.side === 'black' ? 'black' : 'white'
   const resourceId = isGame ? itemId.slice(5) : itemId
   const resourceUrl = isGame ? `/api/games/${resourceId}/` : `/api/positions/${resourceId}/`
   try {
     const r = await fetch(resourceUrl)
     if (!r.ok) throw new Error('Not found')
     const data = await r.json()
-    position = isGame ? gameToPlayablePosition(data) : data
+    if (isGame) {
+      position = gameToPlayablePosition(data)
+      initialHistory = gameToPositionHistory(data)
+      initialUserColor = data.user_color || 'white'
+    } else {
+      position = data
+      initialHistory = [{ fen: data.fen, lastMove: null, moveSan: null }]
+    }
   } catch {
     app.innerHTML = `<p class="muted" style="padding:2rem">${isGame ? 'Game' : 'Position'} not found. <button id="back" class="btn-secondary">Back</button></p>`
     app.querySelector('#back').addEventListener('click', () => navigate('library'))
@@ -33,16 +43,16 @@ export async function mountPlay(app, navigate, itemId) {
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
           <p class="fen-display">${escapeHtml(position.fen)}</p>
         </div>
-        <div class="side-selector">
+        <div class="side-selector" ${browseOnly ? 'hidden' : ''}>
           <p>Play as</p>
           <div class="side-buttons">
-            <button class="side-btn active" data-side="white">White</button>
-            <button class="side-btn" data-side="black">Black</button>
+            <button class="side-btn ${userColorClass(initialUserColor, 'white')}" data-side="white">White</button>
+            <button class="side-btn ${userColorClass(initialUserColor, 'black')}" data-side="black">Black</button>
           </div>
         </div>
         <div class="play-controls">
-          <button id="hint-btn" class="btn-secondary" disabled>Hint</button>
-          <button id="resign-btn" class="btn-secondary">Resign</button>
+          <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
+          <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
           <button id="back-btn" class="btn-secondary">← Library</button>
         </div>
         <div id="engine-banner" class="engine-banner hidden">Engine unavailable — analysis disabled</div>
@@ -81,14 +91,14 @@ export async function mountPlay(app, navigate, itemId) {
     <div class="result-overlay hidden" id="result-overlay">
       <div class="result-card">
         <h2 id="result-text"></h2>
-        <button id="play-again-btn" class="btn-primary">Play Again</button>
+        <button id="play-again-btn" class="btn-primary" ${browseOnly ? 'hidden' : ''}>Play Again</button>
         <button id="back-to-library-btn" class="btn-secondary">Back to Library</button>
       </div>
     </div>
   `
 
   // --- State ---
-  let userColor = 'white'
+  let userColor = initialUserColor
   let chess = new Chess(position.fen)
   let cg = null
   let worker = null
@@ -98,8 +108,8 @@ export async function mountPlay(app, navigate, itemId) {
   let hintMode = false      // true when waiting for engine's hint bestmove
   let pendingEval = null    // latest eval from info lines, committed on bestmove
   let committedCp = null    // last committed cp (for delta calculation)
-  let positionHistory = [{ fen: position.fen, lastMove: null }]
-  let viewIndex = 0         // which position in positionHistory is displayed
+  let positionHistory = initialHistory
+  let viewIndex = positionHistory.length - 1  // which position in positionHistory is displayed
 
   // --- Worker setup ---
   try {
@@ -117,14 +127,39 @@ export async function mountPlay(app, navigate, itemId) {
     if (worker && workerReady) worker.postMessage({ type: 'cmd', cmd })
   }
 
+  function currentViewedFen() {
+    return positionHistory[viewIndex].fen
+  }
+
+  function requestPositionAnalysis(fen) {
+    if (!workerReady || engineMoving || hintMode) return
+    sendToEngine('stop')
+    sendToEngine(`position fen ${fen}`)
+    sendToEngine('go movetime 1000')
+  }
+
+  function setDisplayedFen(fen) {
+    app.querySelector('.fen-display').textContent = fen
+  }
+
+  function syncPlayState(replace = false) {
+    syncState({
+      play: {
+        ply: browseOnly ? viewIndex : 0,
+        side: userColor,
+      },
+    }, { replace })
+  }
+
   function handleWorkerMessage(e) {
     const { type, line } = e.data
     if (type === 'ready') {
       workerReady = true
       // Enable the board now that the engine is ready (if it's the user's turn)
-      if (cg && isUserTurn() && !gameOver) {
+      if (cg && !browseOnly && isUserTurn() && !gameOver) {
         cg.set({ movable: { color: userColor, dests: toDests(chess) } })
       }
+      if (browseOnly) requestPositionAnalysis(currentViewedFen())
       updateHintBtn()
       return
     }
@@ -162,6 +197,11 @@ export async function mountPlay(app, navigate, itemId) {
 
   function updateHintBtn() {
     const btn = app.querySelector('#hint-btn')
+    if (!btn) return
+    if (browseOnly) {
+      btn.disabled = true
+      return
+    }
     btn.disabled = !workerReady || !isUserTurn() || gameOver || engineMoving || !atLatest()
   }
 
@@ -214,7 +254,9 @@ export async function mountPlay(app, navigate, itemId) {
   // --- Move history ---
   function updateMoveHistory() {
     const ol = app.querySelector('#move-history')
-    const history = chess.history()
+    const history = browseOnly
+      ? positionHistory.slice(1).map(step => step.moveSan || '...')
+      : chess.history()
     ol.innerHTML = ''
     for (let i = 0; i < history.length; i += 2) {
       const li = document.createElement('li')
@@ -244,21 +286,27 @@ export async function mountPlay(app, navigate, itemId) {
   // --- History navigation ---
   function atLatest() { return viewIndex === positionHistory.length - 1 }
 
-  function navigateTo(index) {
+  function navigateTo(index, { replace = false } = {}) {
     viewIndex = index
     const { fen, lastMove } = positionHistory[index]
     const live = atLatest()
+    if (browseOnly) chess = new Chess(fen)
     cg.set({
       fen,
       lastMove: lastMove ?? undefined,
       movable: {
         color: userColor,
-        dests: (live && isUserTurn() && workerReady && !gameOver) ? toDests(chess) : new Map(),
+        dests: (!browseOnly && live && isUserTurn() && workerReady && !gameOver) ? toDests(chess) : new Map(),
       },
     })
+    setDisplayedFen(fen)
     updateMoveHistory()
     updateNavButtons()
     updateHintBtn()
+    if (browseOnly) {
+      syncPlayState(replace)
+      requestPositionAnalysis(fen)
+    }
   }
 
   function updateNavButtons() {
@@ -326,6 +374,7 @@ export async function mountPlay(app, navigate, itemId) {
       },
       lastMove: [from, to],
     })
+    setDisplayedFen(chess.fen())
 
     const result = checkGameEnd()
     if (result) { showResult(result); return }
@@ -343,47 +392,55 @@ export async function mountPlay(app, navigate, itemId) {
   function initBoard() {
     const boardEl = app.querySelector('#board')
     const orientation = userColor
+    const movable = browseOnly
+      ? {
+          free: false,
+          color: userColor,
+          dests: new Map(),
+        }
+      : {
+          free: false,
+          color: userColor,
+          dests: (isUserTurn() && workerReady) ? toDests(chess) : new Map(),
+          events: {
+            after(orig, dest) {
+              // Promotion: always promote to queen for simplicity
+              const move = chess.move({ from: orig, to: dest, promotion: 'q' })
+              if (!move) return
+
+              hintMode = false
+              clearHint()
+              positionHistory.push({ fen: chess.fen(), lastMove: [orig, dest] })
+              viewIndex = positionHistory.length - 1
+              updateMoveHistory()
+              updateNavButtons()
+              cg.set({
+                fen: chess.fen(),
+                turnColor: chess.turn() === 'w' ? 'white' : 'black',
+                movable: { color: userColor, dests: new Map() }, // disable while engine thinks
+              })
+              setDisplayedFen(chess.fen())
+
+              const result = checkGameEnd()
+              if (result) { showResult(result); return }
+
+              // Trigger engine move
+              if (workerReady) {
+                engineMoving = true
+                updateHintBtn()
+                sendToEngine('stop')
+                sendToEngine(`position fen ${chess.fen()}`)
+                sendToEngine('go movetime 3000')
+              }
+            },
+          },
+        }
 
     cg = Chessground(boardEl, {
       fen: chess.fen(),
       orientation,
       turnColor: chess.turn() === 'w' ? 'white' : 'black',
-      movable: {
-        free: false,
-        color: userColor,
-        dests: (isUserTurn() && workerReady) ? toDests(chess) : new Map(),
-        events: {
-          after(orig, dest) {
-            // Promotion: always promote to queen for simplicity
-            const move = chess.move({ from: orig, to: dest, promotion: 'q' })
-            if (!move) return
-
-            hintMode = false
-            clearHint()
-            positionHistory.push({ fen: chess.fen(), lastMove: [orig, dest] })
-            viewIndex = positionHistory.length - 1
-            updateMoveHistory()
-            updateNavButtons()
-            cg.set({
-              fen: chess.fen(),
-              turnColor: chess.turn() === 'w' ? 'white' : 'black',
-              movable: { color: userColor, dests: new Map() }, // disable while engine thinks
-            })
-
-            const result = checkGameEnd()
-            if (result) { showResult(result); return }
-
-            // Trigger engine move
-            if (workerReady) {
-              engineMoving = true
-              updateHintBtn()
-              sendToEngine('stop')
-              sendToEngine(`position fen ${chess.fen()}`)
-              sendToEngine('go movetime 3000')
-            }
-          },
-        },
-      },
+      movable,
       highlight: { lastMove: true, check: true },
       animation: { enabled: true, duration: 200 },
     })
@@ -416,7 +473,7 @@ export async function mountPlay(app, navigate, itemId) {
       app.querySelectorAll('.side-btn').forEach(b => b.classList.remove('active'))
       btn.classList.add('active')
       userColor = btn.dataset.side
-      startGame()
+      startGame({ replaceUrl: false })
     })
   })
 
@@ -451,21 +508,25 @@ export async function mountPlay(app, navigate, itemId) {
   // --- Result overlay buttons ---
   app.querySelector('#play-again-btn').addEventListener('click', () => {
     app.querySelector('#result-overlay').classList.add('hidden')
-    startGame()
+    startGame({ replaceUrl: true })
   })
   app.querySelector('#back-to-library-btn').addEventListener('click', () => { if (worker) worker.terminate(); navigate('library') })
 
   // --- Start / restart game ---
-  function startGame() {
+  function startGame({ replaceUrl = true } = {}) {
     gameOver = false
     engineMoving = false
     hintMode = false
     pendingEval = null
     committedCp = null
-    positionHistory = [{ fen: position.fen, lastMove: null }]
-    viewIndex = 0
-    chess = new Chess(position.fen)
+    positionHistory = initialHistory.map(step => ({ ...step }))
+    viewIndex = browseOnly
+      ? clampPly(initialPlayState.ply, positionHistory.length - 1, positionHistory.length - 1)
+      : 0
+    chess = new Chess(positionHistory[viewIndex].fen)
     updateMoveHistory()
+    updateNavButtons()
+    setDisplayedFen(positionHistory[viewIndex].fen)
     app.querySelector('#eval-fill').style.height = '50%'
     app.querySelector('#engine-depth').textContent = 'depth —'
     app.querySelector('#engine-score').textContent = '—'
@@ -475,6 +536,13 @@ export async function mountPlay(app, navigate, itemId) {
 
     if (cg) cg.destroy()
     initBoard()
+
+    if (browseOnly) {
+      navigateTo(viewIndex, { replace: replaceUrl })
+      return
+    }
+
+    syncPlayState(replaceUrl)
 
     sendToEngine('stop')
     sendToEngine('ucinewgame')
@@ -490,7 +558,7 @@ export async function mountPlay(app, navigate, itemId) {
     }
   }
 
-  startGame()
+  startGame({ replaceUrl: true })
 }
 
 function escapeHtml(str) {
@@ -506,4 +574,24 @@ function gameToPlayablePosition(game) {
     notes: '',
     tags: ['game', game.user_color, game.result_label],
   }
+}
+
+
+function gameToPositionHistory(game) {
+  return (game.history || []).map(step => ({
+    fen: step.fen,
+    lastMove: step.last_move,
+    moveSan: step.move_san,
+  }))
+}
+
+
+function clampPly(value, max, fallback) {
+  if (value === null || value === undefined) return fallback
+  return Math.max(0, Math.min(max, value))
+}
+
+
+function userColorClass(current, expected) {
+  return current === expected ? 'active' : ''
 }

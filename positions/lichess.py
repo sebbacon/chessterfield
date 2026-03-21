@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import chess
 
-from positions.models import Game
+from positions.models import Game, Position
 
 
 DRAW_STATUSES = {
@@ -86,3 +86,46 @@ def sync_game_summary(game, username, final_fen):
             'status': (game.get('status') or '')[:30],
         },
     )
+
+
+def build_game_history(game):
+    rows = sorted(
+        Position.objects.filter(source__startswith=f'{game.source}:').values_list('source', 'fen'),
+        key=lambda row: int(row[0].rsplit(':', 1)[1]),
+    )
+    if not rows:
+        return [{'ply': 0, 'fen': game.final_fen, 'last_move': None, 'move_san': None}]
+
+    history = [{'ply': 0, 'fen': rows[0][1], 'last_move': None, 'move_san': None}]
+    board = chess.Board(rows[0][1])
+
+    for source, fen in rows[1:]:
+        move, san = _find_transition(board, fen)
+        ply = int(source.rsplit(':', 1)[1])
+        if move is None:
+            board = chess.Board(fen)
+            history.append({'ply': ply, 'fen': fen, 'last_move': None, 'move_san': None})
+            continue
+
+        uci = move.uci()
+        board.push(move)
+        history.append({
+            'ply': ply,
+            'fen': fen,
+            'last_move': [uci[:2], uci[2:4]],
+            'move_san': san,
+        })
+
+    return history
+
+
+def _find_transition(board, next_fen):
+    for move in board.legal_moves:
+        san = board.san(move)
+        board.push(move)
+        if board.fen() == next_fen:
+            board.pop()
+            return move, san
+        board.pop()
+
+    return None, None
