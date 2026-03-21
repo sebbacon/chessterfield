@@ -42,9 +42,18 @@ test-backend:
 test-frontend:
     cd frontend && npm test
 
-# Run end-to-end smoke tests against a real server (run `just build` first)
-smoke:
-    cd frontend && PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
+# Run end-to-end smoke tests against a real server
+smoke: build
+    #!/usr/bin/env bash
+    PORT=$(.venv/bin/python - <<'PY'
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        print(sock.getsockname()[1])
+    PY
+    )
+    cd frontend && PLAYWRIGHT_PORT="$PORT" PLAYWRIGHT_CHANNEL="${PLAYWRIGHT_CHANNEL:-chrome}" PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
 
 # Build frontend for production
 build:
