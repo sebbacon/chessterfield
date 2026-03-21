@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
+import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
+from typing import Any, Callable
 
 import cv2
 import numpy as np
@@ -17,6 +20,7 @@ class CellCandidate:
     x: int
     y: int
     width: int
+    board_width: int
     height: int
     row: int
     column: int
@@ -27,7 +31,7 @@ class CellCandidate:
 
     @property
     def center_x(self) -> float:
-        return self.x + (self.width / 2)
+        return self.x + (self.board_width / 2)
 
     @property
     def center_y(self) -> float:
@@ -52,13 +56,14 @@ def _expand_right_margin(
 ) -> list[CellCandidate]:
     expanded: list[CellCandidate] = []
     for cell in cells:
-        margin = max(1, int(round(cell.width * margin_ratio)))
-        width = min(page_width, cell.x + cell.width + margin) - cell.x
+        margin = max(1, int(round(cell.board_width * margin_ratio)))
+        width = min(page_width, cell.x + cell.board_width + margin) - cell.x
         expanded.append(
             CellCandidate(
                 x=cell.x,
                 y=cell.y,
                 width=width,
+                board_width=cell.board_width,
                 height=cell.height,
                 row=cell.row,
                 column=cell.column,
@@ -76,8 +81,7 @@ def _classify_marker(page_image: np.ndarray, cell: CellCandidate) -> str:
         return "white"
 
     height, width = crop.shape[:2]
-    content_width = max(1, int(round(width / (1 + RIGHT_MARGIN_RATIO))))
-    roi = crop[: max(24, int(height * 0.14)), content_width:]
+    roi = crop[: max(24, int(height * 0.14)), cell.board_width : width]
     if roi.size == 0:
         return "white"
 
@@ -307,6 +311,7 @@ def infer_cells(
                         x=int(round(x)),
                         y=int(round(y)),
                         width=int(round(width)),
+                        board_width=int(round(width)),
                         height=int(round(height)),
                         row=row_index,
                         column=column_index,
@@ -331,6 +336,7 @@ def infer_cells(
                     x=max(0, int(round(left))),
                     y=max(0, int(round(top))),
                     width=min(page_shape[1], int(round(right))) - max(0, int(round(left))),
+                    board_width=min(page_shape[1], int(round(right))) - max(0, int(round(left))),
                     height=min(page_shape[0], int(round(bottom))) - max(0, int(round(top))),
                     row=row_index,
                     column=start,
@@ -391,7 +397,13 @@ def _draw_overlay(page_image: np.ndarray, result: ExtractionResult) -> np.ndarra
     return overlay
 
 
-def write_result(page_image: np.ndarray, result: ExtractionResult, output_root: str | Path) -> Path:
+def write_result(
+    page_image: np.ndarray,
+    result: ExtractionResult,
+    output_root: str | Path,
+    fenify_predictor: Any | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> Path:
     output_root = Path(output_root)
     page_name = Path(result.image_path).stem
     page_dir = output_root / page_name
@@ -406,11 +418,32 @@ def write_result(page_image: np.ndarray, result: ExtractionResult, output_root: 
 
     manifest = asdict(result)
     manifest["cells"] = [asdict(cell) for cell in result.cells]
+    if fenify_predictor is not None:
+        manifest["fenify"] = {
+            "repo_dir": str(fenify_predictor.repo_dir),
+            "model_path": str(fenify_predictor.model_path),
+        }
     for index, cell in enumerate(result.cells, start=1):
-        crop = page_image[cell.y : cell.y + cell.height, cell.x : cell.x + cell.width]
+        crop = page_image[cell.y : cell.y + cell.height, cell.x : cell.x + cell.board_width]
         crop_path = page_dir / f"cell-{index:02d}-r{cell.row + 1}c{cell.column + 1}-span{cell.column_span}.jpg"
         cv2.imwrite(str(crop_path), crop)
         manifest["cells"][index - 1]["crop_path"] = str(crop_path)
+        marker_crop = page_image[cell.y : cell.y + cell.height, cell.x : cell.x + cell.width]
+        marker_crop_path = page_dir / (
+            f"marker-cell-{index:02d}-r{cell.row + 1}c{cell.column + 1}-span{cell.column_span}.jpg"
+        )
+        cv2.imwrite(str(marker_crop_path), marker_crop)
+        manifest["cells"][index - 1]["marker_crop_path"] = str(marker_crop_path)
+        if fenify_predictor is not None:
+            if progress_callback is not None:
+                progress_callback(f"fenify {page_name} {index}/{len(result.cells)} {crop_path.name}")
+            try:
+                prediction = fenify_predictor.predict(crop_path, cell.marker)
+            except Exception as exc:
+                manifest["cells"][index - 1]["fen_error"] = str(exc)
+            else:
+                manifest["cells"][index - 1]["board_fen"] = prediction.board_fen
+                manifest["cells"][index - 1]["fen"] = prediction.fen
 
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return page_dir
@@ -427,11 +460,47 @@ def main(argv: list[str] | None = None) -> int:
         default="tmp/extracted-cells",
         help="Directory for normalized images, overlays, crops, and manifest JSON",
     )
+    parser.add_argument(
+        "--fenify",
+        action="store_true",
+        help="Run board-only crops through Fenify and add predicted FEN strings to the manifest",
+    )
+    parser.add_argument(
+        "--fenify-model",
+        default=os.environ.get("FENIFY_MODEL_PATH"),
+        help="Path to the Fenify TorchScript model (defaults to $FENIFY_MODEL_PATH if set)",
+    )
+    parser.add_argument(
+        "--fenify-repo",
+        default=os.environ.get("FENIFY_REPO_DIR"),
+        help="Path to a local Fenify checkout (defaults to $FENIFY_REPO_DIR or tmp/fenify)",
+    )
     args = parser.parse_args(argv)
 
+    def progress(message: str) -> None:
+        print(message, file=sys.stderr, flush=True)
+
+    fenify_predictor = None
+    if args.fenify:
+        from vision.fenify import FenifyPredictor
+
+        progress("fenify loading model")
+        fenify_predictor = FenifyPredictor(model_path=args.fenify_model, repo_dir=args.fenify_repo)
+        progress(
+            f"fenify model ready repo={fenify_predictor.repo_dir} model={fenify_predictor.model_path.name}"
+        )
+
     for image_path in args.images:
+        progress(f"extracting {image_path}")
         page_image, result = extract_cells(image_path)
-        page_dir = write_result(page_image, result, args.output_dir)
+        progress(f"writing {image_path} cells={len(result.cells)}")
+        page_dir = write_result(
+            page_image,
+            result,
+            args.output_dir,
+            fenify_predictor=fenify_predictor,
+            progress_callback=progress if fenify_predictor is not None else None,
+        )
         print(
             json.dumps(
                 {

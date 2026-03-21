@@ -1,5 +1,9 @@
 set dotenv-load
 
+fenify_repo_dir := "tmp/fenify"
+fenify_model_name := "models_2023-07-10-chessboard-2D-balanced-fen-cpu.pt"
+fenify_model_path := fenify_repo_dir / fenify_model_name
+
 # Show available commands
 default:
     @just --list
@@ -55,8 +59,22 @@ smoke: build
     )
     cd frontend && PLAYWRIGHT_PORT="$PORT" PLAYWRIGHT_CHANNEL="${PLAYWRIGHT_CHANNEL:-chromium}" PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
 
-# Build frontend for production
-build:
+# Ensure optional Fenify dependencies and model weights are present
+fenify-setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -d {{fenify_repo_dir}}/.git ] || git clone https://github.com/notnil/fenify {{fenify_repo_dir}}
+    .venv/bin/python - <<'PY' || uv pip install --python .venv/bin/python -r requirements-fenify.txt
+    import importlib.util
+    import sys
+
+    missing = [name for name in ("PIL", "torch", "torchvision") if importlib.util.find_spec(name) is None]
+    raise SystemExit(1 if missing else 0)
+    PY
+    [ -f {{fenify_model_path}} ] || curl -L https://github.com/notnil/fenify/releases/download/v2023-07-10/{{fenify_model_name}} -o {{fenify_model_path}}
+
+# Build frontend for production and provision Fenify inference assets
+build: fenify-setup
     cd frontend && npm run build
     cp frontend/node_modules/stockfish/src/stockfish-nnue-16-single.wasm frontend/dist/assets/
 
@@ -76,5 +94,6 @@ analyse-db id:
 
 # Extract candidate puzzle cells from photographed page(s)
 # Usage: just extract-puzzle-cells tests/fixtures/puzzle_pages/*.jpg
+# Fenify: just extract-puzzle-cells tests/fixtures/puzzle_pages/*.jpg --fenify --fenify-model /path/to/model.pt
 extract-puzzle-cells *args:
     .venv/bin/python -m vision {{args}}

@@ -1,14 +1,35 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
+import cv2
 import pytest
 
 from vision.cells import extract_cells, write_result
 
 
 FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "puzzle_pages"
+
+
+@dataclass(frozen=True)
+class FakeFenifyPrediction:
+    board_fen: str
+    fen: str
+
+
+class FakeFenifyPredictor:
+    def __init__(self) -> None:
+        self.repo_dir = Path("/tmp/fake-fenify")
+        self.model_path = Path("/tmp/fake-fenify/model.pt")
+        self.calls: list[tuple[str, str]] = []
+
+    def predict(self, image_path: str | Path, marker: str) -> FakeFenifyPrediction:
+        self.calls.append((Path(image_path).name, marker))
+        turn = "b" if marker == "black" else "w"
+        board_fen = "8/8/8/8/8/8/8/4K3"
+        return FakeFenifyPrediction(board_fen=board_fen, fen=f"{board_fen} {turn} - - 0 1")
 
 
 @pytest.mark.parametrize(
@@ -58,6 +79,48 @@ def test_write_result_creates_manifest_and_crops(tmp_path: Path) -> None:
     assert len(list(page_dir.glob("cell-*.jpg"))) == len(result.cells)
     assert len(manifest["cells"]) == len(result.cells)
     assert manifest["cells"][0]["marker"] in {"black", "white"}
+    assert Path(manifest["cells"][0]["marker_crop_path"]).exists()
+
+
+def test_exported_cell_crop_excludes_marker_margin(tmp_path: Path) -> None:
+    page_image, result = extract_cells(FIXTURE_DIR / "page-sample-1.jpg")
+
+    page_dir = write_result(page_image, result, tmp_path)
+    manifest = json.loads((page_dir / "manifest.json").read_text())
+
+    first_cell = result.cells[0]
+    board_crop = cv2.imread(manifest["cells"][0]["crop_path"])
+    marker_crop = cv2.imread(manifest["cells"][0]["marker_crop_path"])
+
+    assert board_crop is not None
+    assert marker_crop is not None
+    assert board_crop.shape[1] == first_cell.board_width
+    assert marker_crop.shape[1] == first_cell.width
+    assert board_crop.shape[1] < marker_crop.shape[1]
+
+
+def test_write_result_can_append_fen_predictions(tmp_path: Path) -> None:
+    page_image, result = extract_cells(FIXTURE_DIR / "page-sample-1.jpg")
+    predictor = FakeFenifyPredictor()
+    messages: list[str] = []
+
+    page_dir = write_result(
+        page_image,
+        result,
+        tmp_path,
+        fenify_predictor=predictor,
+        progress_callback=messages.append,
+    )
+    manifest = json.loads((page_dir / "manifest.json").read_text())
+
+    assert manifest["fenify"]["repo_dir"] == str(predictor.repo_dir)
+    assert manifest["fenify"]["model_path"] == str(predictor.model_path)
+    assert manifest["cells"][0]["board_fen"] == "8/8/8/8/8/8/8/4K3"
+    assert manifest["cells"][0]["fen"].endswith(" b - - 0 1")
+    assert manifest["cells"][2]["fen"].endswith(" w - - 0 1")
+    assert len(predictor.calls) == len(result.cells)
+    assert messages[0].startswith("fenify page-sample-1 1/")
+    assert len(messages) == len(result.cells)
 
 
 def test_cells_include_right_edge_margin() -> None:
