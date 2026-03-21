@@ -73,3 +73,8 @@ analyse *args:
 # Usage: just analyse-db 42
 analyse-db id:
     .venv/bin/python manage.py shell -c "from positions.models import Position; print(Position.objects.get(id={{id}}).fen)" | .venv/bin/python -m analyse -
+
+# Extract candidate puzzle cells from photographed page(s)
+# Usage: just extract-puzzle-cells tests/fixtures/puzzle_pages/*.jpg
+extract-puzzle-cells *args:
+    .venv/bin/python -m vision {{args}}
