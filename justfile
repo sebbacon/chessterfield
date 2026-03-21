@@ -59,6 +59,16 @@ smoke: build
     )
     cd frontend && PLAYWRIGHT_PORT="$PORT" PLAYWRIGHT_CHANNEL="${PLAYWRIGHT_CHANNEL:-chromium}" PLAYWRIGHT_BROWSERS_PATH={{justfile_directory()}}/.playwright npx playwright test
 
+# Ensure required OCR tool is available for header metadata extraction
+ocr-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v tesseract >/dev/null 2>&1; then
+        echo "Error: tesseract is required for puzzle header OCR but is not installed." >&2
+        echo "Install it with: brew install tesseract" >&2
+        exit 1
+    fi
+
 # Ensure optional Fenify dependencies and model weights are present
 fenify-setup:
     #!/usr/bin/env bash
@@ -74,7 +84,7 @@ fenify-setup:
     [ -f {{fenify_model_path}} ] || curl -L https://github.com/notnil/fenify/releases/download/v2023-07-10/{{fenify_model_name}} -o {{fenify_model_path}}
 
 # Build frontend for production and provision Fenify inference assets
-build: fenify-setup
+build: ocr-check fenify-setup
     cd frontend && npm run build
     cp frontend/node_modules/stockfish/src/stockfish-nnue-16-single.wasm frontend/dist/assets/
 
