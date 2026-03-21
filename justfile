@@ -69,6 +69,51 @@ ocr-check:
         exit 1
     fi
 
+# Ensure local SSHFS support is available for Sprite deploys
+sshfs-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v sshfs >/dev/null 2>&1; then
+        echo "Error: sshfs is required for Sprite deployment but is not installed." >&2
+        case "$(uname -s)" in
+            Darwin)
+                echo "Install it with: brew install --cask macfuse && brew install sshfs-mac" >&2
+                ;;
+            Linux)
+                echo "Install it with your package manager, for example: sudo apt-get install sshfs" >&2
+                ;;
+            *)
+                echo "Install sshfs for your platform, then retry." >&2
+                ;;
+        esac
+        exit 1
+    fi
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if ! pkgutil --pkgs 2>/dev/null | grep -Eiq 'macfuse|osxfuse'; then
+            echo "Error: macFUSE is required for sshfs mounts on macOS but does not appear to be installed." >&2
+            echo "Install it with: brew install --cask macfuse && brew install sshfs-mac" >&2
+            exit 1
+        fi
+    fi
+
+# Ensure the Sprite CLI is installed locally
+sprite-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sprite_bin="${SPRITE_BIN:-sprite}"
+    if [[ "$sprite_bin" == */* ]]; then
+        found=0
+        [[ -x "$sprite_bin" ]] && found=1
+    else
+        found=0
+        command -v "$sprite_bin" >/dev/null 2>&1 && found=1
+    fi
+    if [[ "$found" -ne 1 ]]; then
+        echo "Error: sprite CLI is required for deployment but is not installed." >&2
+        echo "Install it with: curl -fsSL https://sprites.dev/install.sh | sh" >&2
+        exit 1
+    fi
+
 # Ensure optional Fenify dependencies and model weights are present
 fenify-setup:
     #!/usr/bin/env bash
@@ -84,9 +129,17 @@ fenify-setup:
     [ -f {{fenify_model_path}} ] || curl -L https://github.com/notnil/fenify/releases/download/v2023-07-10/{{fenify_model_name}} -o {{fenify_model_path}}
 
 # Build frontend for production and provision Fenify inference assets
-build: ocr-check fenify-setup
+build: ocr-check sshfs-check fenify-setup
     cd frontend && npm run build
     cp frontend/node_modules/stockfish/src/stockfish-nnue-16-single.wasm frontend/dist/assets/
+
+# Deploy the app to a public Sprite using SSHFS sync
+deploy-sprite sprite_name="chessterfield": build sprite-check
+    ./scripts/deploy_sprite.sh {{sprite_name}}
+
+# Push the local SQLite database snapshot to a deployed Sprite
+push-sprite-data sprite_name="chessterfield": sprite-check
+    ./scripts/push_sprite_data.sh {{sprite_name}}
 
 # Import games from Lichess (--max-games N to limit)
 import-lichess *args:
