@@ -92,6 +92,11 @@ build: ocr-check fenify-setup
 import-lichess *args:
     .venv/bin/python manage.py import_lichess {{args}}
 
+# Import photographed puzzle pages from a folder into the app
+# Usage: just import-puzzle-folder path/to/folder
+import-puzzle-folder folder *args:
+    .venv/bin/python manage.py import_puzzle_folder {{folder}} {{args}}
+
 # Analyse a chess position (requires: brew install stockfish)
 # Usage: just analyse "FEN" | just analyse --pgn game.pgn
 analyse *args:
