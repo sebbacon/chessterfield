@@ -37,6 +37,44 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   // --- Render layout ---
   app.innerHTML = `
     <div class="play-layout">
+      <main class="play-main">
+        <div class="play-topbar">
+          <button id="back-btn" class="btn-secondary">← Library</button>
+          <div class="play-topbar-actions">
+            <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
+            <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
+          </div>
+        </div>
+        <div id="board-wrap">
+          <div id="board"></div>
+        </div>
+      </main>
+
+      <aside class="sidebar play-sidebar-right">
+        <div class="move-nav">
+          <button id="back-move-btn" class="btn-icon" disabled title="Previous move" aria-label="Previous move">&#9664;</button>
+          <button id="fwd-move-btn" class="btn-icon" disabled title="Next move" aria-label="Next move">&#9654;</button>
+        </div>
+        <div class="play-analysis">
+          <div class="eval-bar-wrap">
+            <div class="eval-label" id="eval-white-label"></div>
+            <div class="eval-bar-outer">
+              <div class="eval-bar-fill" id="eval-fill" style="height:50%"></div>
+            </div>
+            <div class="eval-label" id="eval-black-label"></div>
+          </div>
+          <div class="engine-info">
+            <span id="engine-depth">depth —</span>
+            <span id="engine-score">—</span>
+            <span id="eval-delta" class="eval-delta"></span>
+          </div>
+        </div>
+        <div class="move-history-wrap">
+          <h3>Moves</h3>
+          <ol id="move-history" class="move-history"></ol>
+        </div>
+      </aside>
+
       <aside class="sidebar play-sidebar-left">
         <div class="pos-info">
           <h2>${escapeHtml(position.name)}</h2>
@@ -50,41 +88,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
             <button class="side-btn ${userColorClass(initialUserColor, 'black')}" data-side="black">Black</button>
           </div>
         </div>
-        <div class="play-controls">
-          <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
-          <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
-          <button id="back-btn" class="btn-secondary">← Library</button>
-        </div>
         <div id="engine-banner" class="engine-banner hidden">Engine unavailable — analysis disabled</div>
-      </aside>
-
-      <main class="play-main">
-        <div id="board-wrap">
-          <div id="board"></div>
-        </div>
-      </main>
-
-      <aside class="sidebar play-sidebar-right">
-        <div class="eval-bar-wrap">
-          <div class="eval-label" id="eval-white-label"></div>
-          <div class="eval-bar-outer">
-            <div class="eval-bar-fill" id="eval-fill" style="height:50%"></div>
-          </div>
-          <div class="eval-label" id="eval-black-label"></div>
-        </div>
-        <div class="engine-info">
-          <span id="engine-depth">depth —</span>
-          <span id="engine-score">—</span>
-          <span id="eval-delta" class="eval-delta"></span>
-        </div>
-        <div class="move-history-wrap">
-          <h3>Moves</h3>
-          <ol id="move-history" class="move-history"></ol>
-          <div class="move-nav">
-            <button id="back-move-btn" class="btn-icon" disabled title="Previous move">&#9664;</button>
-            <button id="fwd-move-btn" class="btn-icon" disabled title="Next move">&#9654;</button>
-          </div>
-        </div>
       </aside>
     </div>
 

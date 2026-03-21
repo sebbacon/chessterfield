@@ -19,6 +19,13 @@ async function clickSquare(page, square) {
   )
 }
 
+async function importPosition(page, name) {
+  await page.click('#go-import')
+  await page.fill('#fen-input', FEN)
+  await page.fill('#name-input', name)
+  await page.locator('[type=submit]').click()
+}
+
 test('library page loads', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('h1')).toHaveText('Positions')
@@ -26,10 +33,7 @@ test('library page loads', async ({ page }) => {
 
 test('can import a position', async ({ page }) => {
   await page.goto('/')
-  await page.click('#go-import')
-  await page.fill('#fen-input', FEN)
-  await page.fill('#name-input', 'Smoke Test Position')
-  await page.locator('[type=submit]').click()
+  await importPosition(page, 'Smoke Test Position')
   await expect(page.locator('.position-card h3').filter({ hasText: 'Smoke Test Position' }).first()).toBeVisible()
 })
 
@@ -39,10 +43,7 @@ test('engine loads, board becomes interactive, and responds to a move', async ({
   page.on('pageerror', err => consoleMessages.push(`[pageerror] ${err.message}`))
   // Setup: import a position
   await page.goto('/')
-  await page.click('#go-import')
-  await page.fill('#fen-input', FEN)
-  await page.fill('#name-input', 'Engine Smoke Test')
-  await page.locator('[type=submit]').click()
+  await importPosition(page, 'Engine Smoke Test')
   await page.locator('.play-btn').first().click()
 
   // Board must be visible
@@ -75,4 +76,48 @@ test('engine loads, board becomes interactive, and responds to a move', async ({
   // Eval bar must have updated from its initial 50%
   const height = await page.locator('#eval-fill').evaluate(el => el.style.height)
   expect(height).not.toBe('50%')
+})
+
+test('responsive layouts stay usable on desktop and mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto('/')
+  await expect(page.locator('#go-import')).toBeVisible()
+  await expect(page.locator('#library-nav-toggle')).toBeHidden()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.reload()
+
+  const navToggle = page.locator('#library-nav-toggle')
+  await expect(navToggle).toBeVisible()
+  await expect(navToggle).toHaveAttribute('aria-expanded', 'false')
+  await navToggle.click()
+  await expect(navToggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('#library-sidebar')).toHaveClass(/mobile-open/)
+  await page.click('#library-nav-close')
+  await expect(navToggle).toHaveAttribute('aria-expanded', 'false')
+
+  await importPosition(page, 'Mobile Layout Smoke')
+  await expect(page.locator('.position-card h3').filter({ hasText: 'Mobile Layout Smoke' }).first()).toBeVisible()
+
+  const cards = await page.locator('.position-card').evaluateAll(nodes => nodes.slice(0, 2).map(node => {
+    const rect = node.getBoundingClientRect()
+    return { x: rect.x, y: rect.y }
+  }))
+  if (cards.length === 2) {
+    expect(Math.abs(cards[0].x - cards[1].x)).toBeLessThan(4)
+    expect(cards[1].y).toBeGreaterThan(cards[0].y)
+  }
+
+  await page.locator('.play-btn').first().click()
+  await expect(page.locator('#board')).toBeVisible()
+  await expect(page.locator('.move-nav')).toBeVisible()
+
+  const boardBox = await page.locator('#board-wrap').boundingBox()
+  const moveNavBox = await page.locator('.move-nav').boundingBox()
+  const detailsBox = await page.locator('.play-sidebar-left').boundingBox()
+  expect(boardBox).not.toBeNull()
+  expect(moveNavBox).not.toBeNull()
+  expect(detailsBox).not.toBeNull()
+  expect(moveNavBox.y).toBeGreaterThan(boardBox.y + boardBox.height - 4)
+  expect(detailsBox.y).toBeGreaterThan(moveNavBox.y)
 })

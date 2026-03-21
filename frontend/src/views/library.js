@@ -3,7 +3,12 @@ import { fenToMiniBoard } from '../chess/miniboard.js'
 export async function mountLibrary(app, navigate, initialState = {}, syncState = () => {}) {
   app.innerHTML = `
     <div class="library-layout">
-      <aside class="sidebar">
+      <div class="library-sidebar-backdrop" id="library-sidebar-backdrop" hidden></div>
+      <aside class="sidebar library-sidebar" id="library-sidebar">
+        <div class="library-sidebar-header">
+          <h2>Browse & Filters</h2>
+          <button id="library-nav-close" class="btn-secondary library-nav-close" type="button" aria-label="Close browse and filters">Close</button>
+        </div>
         <div class="sidebar-section">
           <h2>Browse</h2>
           <div class="browse-toggle">
@@ -18,7 +23,18 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
       </aside>
       <main class="library-main">
         <div class="library-header">
-          <h1 id="library-title">Positions</h1>
+          <div class="library-header-main">
+            <button
+              id="library-nav-toggle"
+              class="btn-secondary nav-toggle"
+              type="button"
+              aria-controls="library-sidebar"
+              aria-expanded="false"
+            >
+              Browse & Filters
+            </button>
+            <h1 id="library-title">Positions</h1>
+          </div>
           <button id="go-import" class="btn-primary">+ Import Position</button>
         </div>
         <div id="library-grid">Loading...</div>
@@ -36,9 +52,31 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   let mode = initialState.mode === 'games' ? 'games' : 'positions'
   let selectedTags = new Set(initialState.tags || [])
   let requestSeq = 0
+  let isSidebarOpen = false
+  const mobileQuery = getMobileQuery()
+  const navToggle = app.querySelector('#library-nav-toggle')
+  const navClose = app.querySelector('#library-nav-close')
+  const sidebar = app.querySelector('#library-sidebar')
+  const sidebarBackdrop = app.querySelector('#library-sidebar-backdrop')
 
   app.querySelector('#show-positions').addEventListener('click', () => switchMode('positions'))
   app.querySelector('#show-games').addEventListener('click', () => switchMode('games'))
+  navToggle.addEventListener('click', () => {
+    isSidebarOpen = !isSidebarOpen
+    applySidebarState()
+  })
+  navClose.addEventListener('click', () => {
+    isSidebarOpen = false
+    applySidebarState()
+  })
+  sidebarBackdrop.addEventListener('click', () => {
+    isSidebarOpen = false
+    applySidebarState()
+  })
+  mobileQuery.addEventListener('change', () => {
+    isSidebarOpen = !mobileQuery.matches
+    applySidebarState()
+  })
 
   async function loadTags() {
     try {
@@ -57,6 +95,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     pages[mode].current = 1
     updateModeUi()
     syncLibraryState()
+    maybeCloseSidebar()
     loadCurrent(true)
   }
 
@@ -93,10 +132,25 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
         else selectedTags.delete(cb.value)
         pages.positions.current = 1
         syncLibraryState()
+        maybeCloseSidebar()
         if (mode === 'positions') loadPositions(true)
         renderTags()
       })
     })
+  }
+
+  function applySidebarState() {
+    const isMobile = mobileQuery.matches
+    const expanded = isMobile ? isSidebarOpen : true
+    navToggle.setAttribute('aria-expanded', String(expanded))
+    sidebar.classList.toggle('mobile-open', isMobile && isSidebarOpen)
+    sidebarBackdrop.hidden = !(isMobile && isSidebarOpen)
+  }
+
+  function maybeCloseSidebar() {
+    if (!mobileQuery.matches) return
+    isSidebarOpen = false
+    applySidebarState()
   }
 
   function loadCurrent(replace = true) {
@@ -251,6 +305,8 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   }
 
   updateModeUi()
+  isSidebarOpen = !mobileQuery.matches
+  applySidebarState()
   syncLibraryState(true)
   await Promise.all([loadTags(), loadCurrent()])
 }
@@ -279,4 +335,12 @@ function showToast(msg) {
   t.textContent = msg
   document.body.appendChild(t)
   setTimeout(() => t.remove(), 4000)
+}
+
+function getMobileQuery() {
+  if (typeof window.matchMedia === 'function') return window.matchMedia('(max-width: 860px)')
+  return {
+    matches: false,
+    addEventListener() {},
+  }
 }
