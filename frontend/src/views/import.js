@@ -72,6 +72,10 @@ export async function mountImport(app, navigate) {
     suggestionsEl.innerHTML = ''
   }
 
+  function commitPendingTag() {
+    if (tagInput.value.trim()) addTag(tagInput.value)
+  }
+
   tagInput.addEventListener('input', () => {
     const val = tagInput.value.trim().toLowerCase()
     if (!val) { suggestionsEl.innerHTML = ''; return }
@@ -87,6 +91,7 @@ export async function mountImport(app, navigate) {
   tagInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); addTag(tagInput.value) }
   })
+  tagInput.addEventListener('blur', commitPendingTag)
 
   // FEN validation
   const fenInput = app.querySelector('#fen-input')
@@ -108,6 +113,7 @@ export async function mountImport(app, navigate) {
   // Form submit
   app.querySelector('#import-form').addEventListener('submit', async (e) => {
     e.preventDefault()
+    commitPendingTag()
 
     const fen = fenInput.value.trim()
     const name = app.querySelector('#name-input').value.trim()
