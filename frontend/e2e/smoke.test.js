@@ -52,7 +52,7 @@ test('engine loads, board becomes interactive, and responds to a move', async ({
   // Board starts disabled until engine posts 'ready' (WASM can take several seconds).
   await expect(async () => {
     await clickSquare(page, 'e2')
-    await expect(page.locator('cg-board square.move-dest')).toBeVisible({ timeout: 1000 })
+    await expect(page.locator('cg-board square.move-dest').first()).toBeVisible({ timeout: 1000 })
   }).toPass({ timeout: 30_000 }).catch(err => {
     console.log('Console messages at failure:\n' + consoleMessages.join('\n'))
     throw err
