@@ -52,6 +52,42 @@ resolve_cmd() {
   fi
 }
 
+proxy_pids_for_port() {
+  lsof -tiTCP:"$LOCAL_PROXY_PORT" -sTCP:LISTEN 2>/dev/null || true
+}
+
+is_sprite_proxy_pid() {
+  local pid="$1"
+  local cmd
+
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+  [[ -n "$cmd" ]] || return 1
+  [[ "$cmd" == *"sprite"* ]] || return 1
+  [[ "$cmd" == *" proxy ${LOCAL_PROXY_PORT}:22"* ]] || return 1
+  [[ "$cmd" == *" -s ${SPRITE_NAME} "* || "$cmd" == *" -s ${SPRITE_NAME}" || "$cmd" == *" ${SPRITE_NAME} proxy ${LOCAL_PROXY_PORT}:22"* ]]
+}
+
+cleanup_proxy_port() {
+  local pid
+
+  for pid in $(proxy_pids_for_port); do
+    if ! is_sprite_proxy_pid "$pid"; then
+      continue
+    fi
+
+    kill "$pid" >/dev/null 2>&1 || true
+    for _ in {1..20}; do
+      if ! kill -0 "$pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      kill -9 "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+}
+
 cleanup() {
   set +e
 
@@ -63,6 +99,8 @@ cleanup() {
     kill "$PROXY_PID" >/dev/null 2>&1 || true
     wait "$PROXY_PID" >/dev/null 2>&1 || true
   fi
+
+  cleanup_proxy_port
 }
 
 trap cleanup EXIT
@@ -118,6 +156,8 @@ sprite() {
     fi
   fi
 }
+
+cleanup_proxy_port
 
 if lsof -iTCP:"$LOCAL_PROXY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "Error: local port $LOCAL_PROXY_PORT is already in use. Set SPRITE_PROXY_PORT to another port and retry." >&2
