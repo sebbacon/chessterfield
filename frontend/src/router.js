@@ -5,6 +5,7 @@ export const DEFAULT_STATE = {
     mode: 'positions',
     page: 1,
     tags: [],
+    viewed: 'all',
   },
   play: {
     ply: null,
@@ -27,6 +28,7 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
 
   const mode = params.get('mode') === 'games' ? 'games' : 'positions'
   const page = clampPositiveInt(params.get('page'), 1)
+  const viewed = normalizeViewedFilter(params.get('viewed'))
   const queryTags = (params.get('tags') || '')
     .split(',')
     .map(t => t.trim())
@@ -45,6 +47,7 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
       mode,
       page,
       tags,
+      viewed,
     },
     play: {
       ply: ply === null ? null : clampPositiveInt(ply, null),
@@ -63,6 +66,9 @@ export function buildUrlFromState(state) {
   if (state.view === 'library') {
     if (state.library.mode === 'games') params.set('mode', 'games')
     if (state.library.page > 1) params.set('page', String(state.library.page))
+    if (state.library.mode === 'positions' && state.library.viewed !== 'all') {
+      params.set('viewed', state.library.viewed)
+    }
     if (state.library.mode !== 'positions' && state.library.tags.length > 0) {
       params.set('tags', state.library.tags.join(','))
     }
@@ -125,4 +131,8 @@ export function mergeState(currentState, partial) {
 function clampPositiveInt(value, fallback) {
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function normalizeViewedFilter(value) {
+  return value === 'viewed' || value === 'unviewed' ? value : 'all'
 }

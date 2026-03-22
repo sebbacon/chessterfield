@@ -125,9 +125,34 @@ body {
   border: 1px solid #0f3460;
 }
 
-.position-miniboard { background: #0f3460; height: 160px; overflow: hidden; }
+.position-miniboard {
+  position: relative;
+  background: #0f3460;
+  height: 160px;
+  overflow: hidden;
+}
 .position-info { padding: 0.5rem 0.75rem; }
 .position-info h3 { font-size: 0.9rem; margin-bottom: 0.25rem; }
+
+.position-status-indicator {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  z-index: 2;
+  box-shadow: 0 0 0 1px rgba(10, 16, 31, 0.45);
+}
+
+.position-status-indicator.viewed {
+  background: #2ecc71;
+}
+
+.position-status-indicator.unviewed {
+  background: #5b708a;
+}
 
 .game-card .position-info {
   display: flex;
@@ -202,6 +227,18 @@ body {
 }
 .tag-filter.active { color: #90caf9; }
 .tag-filter input { cursor: pointer; }
+
+.viewed-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.viewed-filter-option.active { color: #90caf9; }
+.viewed-filter-option input { cursor: pointer; }
 
 /* Buttons */
 .btn-primary {
@@ -416,6 +453,23 @@ body {
 
 /* Position info */
 .pos-info h2 { font-size: 1rem; margin-bottom: 4px; }
+.viewed-note {
+  margin-top: 0.45rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  background: rgba(15, 52, 96, 0.45);
+  border: 1px solid rgba(144, 202, 249, 0.2);
+  color: #bcd2e8;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.viewed-note-label {
+  display: block;
+  color: #f0f6ff;
+  font-weight: 600;
+}
+
 .fen-display {
   font-family: monospace;
   font-size: 0.65rem;

@@ -1,4 +1,5 @@
 import { fenToMiniBoard } from '../chess/miniboard.js'
+import { getViewedPositionIds } from '../viewed-positions.js'
 
 export async function mountLibrary(app, navigate, initialState = {}, syncState = () => {}) {
   app.innerHTML = `
@@ -15,6 +16,10 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
             <button id="show-positions" class="browse-btn active" type="button">Positions</button>
             <button id="show-games" class="browse-btn" type="button">Games</button>
           </div>
+        </div>
+        <div class="sidebar-section" id="viewed-section">
+          <h2>Viewed</h2>
+          <div id="viewed-filter-list"></div>
         </div>
         <div class="sidebar-section" id="tag-section">
           <h2>Tags</h2>
@@ -51,6 +56,8 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   let allTags = []
   let mode = initialState.mode === 'games' ? 'games' : 'positions'
   let selectedTags = new Set(initialState.tags || [])
+  let viewedFilter = normalizeViewedFilter(initialState.viewed)
+  let viewedPositionIds = getViewedPositionIds()
   let requestSeq = 0
   let isSidebarOpen = false
   const mobileQuery = getMobileQuery()
@@ -104,13 +111,42 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     const gamesBtn = app.querySelector('#show-games')
     const title = app.querySelector('#library-title')
     const importBtn = app.querySelector('#go-import')
+    const viewedSection = app.querySelector('#viewed-section')
     const tagSection = app.querySelector('#tag-section')
 
     positionsBtn.classList.toggle('active', mode === 'positions')
     gamesBtn.classList.toggle('active', mode === 'games')
     title.textContent = mode === 'positions' ? 'Positions' : 'Games'
     importBtn.hidden = mode !== 'positions'
+    viewedSection.hidden = mode !== 'positions'
     tagSection.hidden = mode !== 'positions'
+  }
+
+  function renderViewedFilters() {
+    const container = app.querySelector('#viewed-filter-list')
+    const options = [
+      ['all', 'All positions'],
+      ['viewed', 'Viewed'],
+      ['unviewed', 'Not viewed'],
+    ]
+    container.innerHTML = options.map(([value, label]) => `
+      <label class="viewed-filter-option ${viewedFilter === value ? 'active' : ''}">
+        <input type="radio" name="viewed-filter" value="${value}" ${viewedFilter === value ? 'checked' : ''}>
+        ${label}
+      </label>
+    `).join('')
+
+    container.querySelectorAll('input[name=viewed-filter]').forEach(input => {
+      input.addEventListener('change', () => {
+        viewedFilter = normalizeViewedFilter(input.value)
+        pages.positions.current = 1
+        pages.positions.total = 1
+        syncLibraryState()
+        maybeCloseSidebar()
+        if (mode === 'positions') loadPositions(true)
+        renderViewedFilters()
+      })
+    })
   }
 
   function renderTags() {
@@ -160,18 +196,25 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   async function loadPositions(replace = true) {
     const seq = ++requestSeq
     const requestedMode = mode
+    viewedPositionIds = getViewedPositionIds()
     const grid = app.querySelector('#library-grid')
     if (replace) grid.innerHTML = '<p>Loading...</p>'
     try {
-      const params = [...selectedTags].map(t => `tag=${encodeURIComponent(t)}`)
-      params.push(`page=${pages.positions.current}`)
-      const r = await fetch('/api/positions/?' + params.join('&'))
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data = await r.json()
+      const data = viewedFilter === 'all'
+        ? await fetchPositionPage([...selectedTags], pages.positions.current)
+        : await fetchAllPositionPages([...selectedTags])
       if (seq !== requestSeq || requestedMode !== mode) return
-      pages.positions.total = data.total_pages
-      if (replace) renderPositions(data.results)
-      else appendCards(data.results, positionCardHtml)
+      if (viewedFilter === 'all') {
+        pages.positions.total = data.total_pages
+        if (replace) renderPositions(data.results)
+        else appendCards(data.results, positionCardHtml)
+        return
+      }
+
+      const filtered = data.results.filter(position => matchesViewedFilter(position.id, viewedFilter, viewedPositionIds))
+      pages.positions.current = 1
+      pages.positions.total = 1
+      renderPositions(filtered)
     } catch {
       if (seq === requestSeq && requestedMode === mode) showToast('Failed to load positions')
     }
@@ -196,9 +239,18 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   }
 
   function positionCardHtml(p) {
+    const viewed = viewedPositionIds.has(String(p.id))
     return `
       <div class="position-card">
-        <div class="position-miniboard">${fenToMiniBoard(p.fen)}</div>
+        <div class="position-miniboard">
+          <span
+            class="position-status-indicator ${viewed ? 'viewed' : 'unviewed'}"
+            role="img"
+            aria-label="${viewed ? 'Viewed on this device' : 'Not viewed on this device'}"
+            title="${viewed ? 'Viewed on this device' : 'Not viewed on this device'}"
+          ></span>
+          ${fenToMiniBoard(p.fen)}
+        </div>
         <div class="position-info">
           <h3>${escapeHtml(p.name)}</h3>
           <div class="tags">${p.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
@@ -242,7 +294,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   function renderPositions(positions) {
     const grid = app.querySelector('#library-grid')
     if (positions.length === 0) {
-      grid.innerHTML = '<p class="muted">No positions yet. Import one!</p>'
+      grid.innerHTML = `<p class="muted">${emptyPositionsMessage(viewedFilter)}</p>`
       return
     }
     grid.innerHTML = positions.map(positionCardHtml).join('') + loadMoreHtml()
@@ -276,6 +328,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   }
 
   function loadMoreHtml() {
+    if (mode === 'positions' && viewedFilter !== 'all') return ''
     if (pages[mode].current >= pages[mode].total) return ''
     return '<div class="load-more-row"><button id="load-more-btn" class="btn-secondary">Load more</button></div>'
   }
@@ -294,8 +347,9 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     syncState({
       library: {
         mode,
-        page: pages[mode].current,
+        page: mode === 'positions' && viewedFilter !== 'all' ? 1 : pages[mode].current,
         tags: [...selectedTags].sort(),
+        viewed: viewedFilter,
       },
       play: {
         ply: null,
@@ -305,10 +359,60 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   }
 
   updateModeUi()
+  renderViewedFilters()
   isSidebarOpen = !mobileQuery.matches
   applySidebarState()
   syncLibraryState(true)
   await Promise.all([loadTags(), loadCurrent()])
+}
+
+function normalizeViewedFilter(value) {
+  return value === 'viewed' || value === 'unviewed' ? value : 'all'
+}
+
+async function fetchPositionPage(tags, page) {
+  const params = buildPositionParams(tags, page)
+  const r = await fetch('/api/positions/?' + params.toString())
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return r.json()
+}
+
+async function fetchAllPositionPages(tags) {
+  const firstPage = await fetchPositionPage(tags, 1)
+  const results = [...firstPage.results]
+  for (let page = 2; page <= firstPage.total_pages; page += 1) {
+    const nextPage = await fetchPositionPage(tags, page)
+    results.push(...nextPage.results)
+  }
+  return {
+    ...firstPage,
+    page: 1,
+    total_pages: 1,
+    count: results.length,
+    results,
+  }
+}
+
+function buildPositionParams(tags, page) {
+  const params = new URLSearchParams()
+  params.set('page', String(page))
+  tags.forEach(tag => params.append('tag', tag))
+  return params
+}
+
+function matchesViewedFilter(positionId, viewedFilter, viewedIds) {
+  const viewed = viewedIds.has(String(positionId))
+  return viewedFilter === 'viewed' ? viewed : !viewed
+}
+
+function emptyPositionsMessage(viewedFilter) {
+  if (viewedFilter === 'viewed') {
+    return 'No viewed positions match these filters yet.'
+  }
+  if (viewedFilter === 'unviewed') {
+    return 'No unviewed positions match these filters.'
+  }
+  return 'No positions yet. Import one!'
 }
 
 function capitalize(str) {

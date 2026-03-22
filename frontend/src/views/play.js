@@ -1,6 +1,7 @@
 import { Chess } from 'chess.js'
 import { Chessground } from 'chessground'
 import { parseStockfishLine, cpToPercent } from '../chess/eval.js'
+import { markPositionViewed } from '../viewed-positions.js'
 
 // Import Chessground CSS (Vite handles this)
 import 'chessground/assets/chessground.base.css'
@@ -33,6 +34,8 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     app.querySelector('#back').addEventListener('click', () => navigate('library'))
     return
   }
+
+  const viewedStatus = !isGame ? markPositionViewed(position.id) : null
 
   // --- Render layout ---
   app.innerHTML = `
@@ -79,6 +82,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
         <div class="pos-info">
           <h2>${escapeHtml(position.name)}</h2>
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
+          ${viewedStatus ? `
+            <p class="viewed-note">
+              <span class="viewed-note-label">${viewedStatus.alreadyViewed ? 'Viewed on this device.' : 'Marked viewed on this device.'}</span>
+              This local marker powers the library viewed filter.
+            </p>
+          ` : ''}
           <p class="fen-display">${escapeHtml(position.fen)}</p>
         </div>
         <div class="side-selector" ${browseOnly ? 'hidden' : ''}>

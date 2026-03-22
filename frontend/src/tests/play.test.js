@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mountPlay } from '../views/play.js'
+import { isPositionViewed } from '../viewed-positions.js'
 
 // --- Module mocks (hoisted) ---
 
@@ -71,6 +72,7 @@ describe('Play view game loop', () => {
 
   afterEach(() => {
     app.remove()
+    window.localStorage.clear()
     vi.unstubAllGlobals()
     vi.clearAllMocks()
   })
@@ -119,6 +121,14 @@ describe('Play view game loop', () => {
     mockWorker.onmessage({ data: { type: 'ready' } })
     const lastSet = cgMockInstance.set.mock.calls.at(-1)?.[0]
     expect(lastSet?.movable?.dests).not.toEqual(new Map())
+  })
+
+  it('marks saved positions as viewed locally and shows a note', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    expect(isPositionViewed(1)).toBe(true)
+    expect(app.textContent).toContain('Marked viewed on this device.')
+    expect(app.textContent).toContain('library viewed filter')
   })
 
   it('can open a game at its final position and step through history', async () => {

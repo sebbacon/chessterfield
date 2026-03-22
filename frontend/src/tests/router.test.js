@@ -17,19 +17,21 @@ describe('router state', () => {
         mode: 'positions',
         page: 3,
         tags: ['endgame', 'lichess'],
+        viewed: 'unviewed',
       },
     })
 
-    expect(buildUrlFromState(state)).toBe('/tags/endgame+lichess/?page=3')
+    expect(buildUrlFromState(state)).toBe('/tags/endgame+lichess/?page=3&viewed=unviewed')
   })
 
   it('parses a tagged library URL', () => {
-    const state = parseUrlState('/tags/endgame+lichess/', '?page=2')
+    const state = parseUrlState('/tags/endgame+lichess/', '?page=2&viewed=viewed')
 
     expect(state.view).toBe('library')
     expect(state.library.mode).toBe('positions')
     expect(state.library.page).toBe(2)
     expect(state.library.tags).toEqual(['endgame', 'lichess'])
+    expect(state.library.viewed).toBe('viewed')
   })
 
   it('builds a bookmarked play URL for a saved position', () => {
