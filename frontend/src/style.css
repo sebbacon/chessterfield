@@ -447,25 +447,28 @@ body {
   justify-content: flex-end;
   gap: 0.5rem;
   flex-wrap: wrap;
+  align-items: center;
 }
 
 /* Position info */
 .pos-info h2 { font-size: 1rem; margin-bottom: 4px; }
-.viewed-note {
-  margin-top: 0.45rem;
-  padding: 0.55rem 0.65rem;
-  border-radius: 8px;
-  background: rgba(15, 52, 96, 0.45);
-  border: 1px solid rgba(144, 202, 249, 0.2);
-  color: #bcd2e8;
+
+.viewed-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(46, 204, 113, 0.14);
+  border: 1px solid rgba(46, 204, 113, 0.35);
+  color: #d8ffef;
   font-size: 0.78rem;
-  line-height: 1.4;
+  line-height: 1;
 }
 
-.viewed-note-label {
-  display: block;
-  color: #f0f6ff;
-  font-weight: 600;
+.viewed-pill-icon {
+  font-size: 0.8rem;
+  font-weight: 700;
 }
 
 .fen-display {

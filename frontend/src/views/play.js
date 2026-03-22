@@ -44,6 +44,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
         <div class="play-topbar">
           <button id="back-btn" class="btn-secondary">← Library</button>
           <div class="play-topbar-actions">
+            ${viewedStatus ? `
+              <span class="viewed-pill" aria-label="Seen on this device">
+                <span class="viewed-pill-icon" aria-hidden="true">✓</span>
+                Seen
+              </span>
+            ` : ''}
             <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
             <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
           </div>
@@ -82,12 +88,6 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
         <div class="pos-info">
           <h2>${escapeHtml(position.name)}</h2>
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
-          ${viewedStatus ? `
-            <p class="viewed-note">
-              <span class="viewed-note-label">${viewedStatus.alreadyViewed ? 'Viewed on this device.' : 'Marked viewed on this device.'}</span>
-              This local marker powers the library viewed filter.
-            </p>
-          ` : ''}
           <p class="fen-display">${escapeHtml(position.fen)}</p>
         </div>
         <div class="side-selector" ${browseOnly ? 'hidden' : ''}>

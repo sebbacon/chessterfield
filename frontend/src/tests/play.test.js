@@ -127,8 +127,7 @@ describe('Play view game loop', () => {
     await mountPlay(app, navigate, 1, {}, syncState)
 
     expect(isPositionViewed(1)).toBe(true)
-    expect(app.textContent).toContain('Marked viewed on this device.')
-    expect(app.textContent).toContain('library viewed filter')
+    expect(app.querySelector('.viewed-pill')?.textContent).toContain('Seen')
   })
 
   it('can open a game at its final position and step through history', async () => {

@@ -24,7 +24,7 @@ vite:
     cd frontend && npm run dev
 
 # Run both servers with hot reload in tmux split panes
-dev:
+dev: build
     #!/usr/bin/env bash
     if [ -n "$TMUX" ]; then
         tmux split-window -h "DJANGO_VITE_DEV_MODE=true just django; echo 'Press enter to close...'; read"
@@ -129,12 +129,12 @@ fenify-setup:
     [ -f {{fenify_model_path}} ] || curl -L https://github.com/notnil/fenify/releases/download/v2023-07-10/{{fenify_model_name}} -o {{fenify_model_path}}
 
 # Build frontend for production and provision Fenify inference assets
-build: ocr-check sshfs-check fenify-setup
+build: ocr-check fenify-setup
     cd frontend && npm run build
     cp frontend/node_modules/stockfish/src/stockfish-nnue-16-single.wasm frontend/dist/assets/
 
 # Deploy the app to a public Sprite using SSHFS sync
-deploy-sprite sprite_name="chessterfield": build sprite-check
+deploy-sprite sprite_name="chessterfield": build sprite-check sshfs-check
     ./scripts/deploy_sprite.sh {{sprite_name}}
 
 # Push the local SQLite database snapshot to a deployed Sprite
