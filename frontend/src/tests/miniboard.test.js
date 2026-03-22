@@ -8,21 +8,21 @@ describe('fenToMiniBoard', () => {
     // Should have 64 cells (light or dark)
     expect((html.match(/class="cell (light|dark)"/g) || []).length).toBe(64)
     // Should have all 32 pieces (16 per side)
-    expect((html.match(/class="piece/g) || []).length).toBe(32)
+    expect((html.match(/<piece class="/g) || []).length).toBe(32)
   })
 
-  it('shows white king symbol in starting position', () => {
+  it('renders white king with Chessground classes in starting position', () => {
     const html = fenToMiniBoard('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
-    expect(html).toContain('♔') // white king
+    expect(html).toContain('class="king white"')
   })
 
-  it('shows black queen symbol in starting position', () => {
+  it('renders black queen with Chessground classes in starting position', () => {
     const html = fenToMiniBoard('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
-    expect(html).toContain('♛') // black queen
+    expect(html).toContain('class="queen black"')
   })
 
   it('handles empty board (only one king)', () => {
     const html = fenToMiniBoard('8/8/8/8/8/8/8/4K3 w - - 0 1')
-    expect((html.match(/class="piece/g) || []).length).toBe(1)
+    expect((html.match(/<piece class="/g) || []).length).toBe(1)
   })
 })
