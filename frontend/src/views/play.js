@@ -2,11 +2,53 @@ import { Chess } from 'chess.js'
 import { Chessground } from 'chessground'
 import { parseStockfishLine, cpToPercent } from '../chess/eval.js'
 import { markPositionViewed } from '../viewed-positions.js'
+import EngineWorker from '../chess/worker.js?worker'
 
 // Import Chessground CSS (Vite handles this)
 import 'chessground/assets/chessground.base.css'
 import 'chessground/assets/chessground.brown.css'
 import 'chessground/assets/chessground.cburnett.css'
+
+let builtWorkerUrlPromise = null
+
+function isCrossOriginWorkerError(error) {
+  return error instanceof DOMException && error.name === 'SecurityError'
+}
+
+async function resolveBuiltWorkerUrl() {
+  if (!builtWorkerUrlPromise) {
+    builtWorkerUrlPromise = (async () => {
+      const manifestResponse = await fetch('/static/.vite/manifest.json')
+      if (!manifestResponse.ok) throw new Error('Missing build manifest')
+
+      const manifest = await manifestResponse.json()
+      const mainFile = manifest['src/main.js']?.file
+      if (!mainFile) throw new Error('Missing main build entry')
+
+      const mainResponse = await fetch(`/static/${mainFile}`)
+      if (!mainResponse.ok) throw new Error('Missing built main asset')
+
+      const mainSource = await mainResponse.text()
+      const workerMatch = mainSource.match(/worker-[A-Za-z0-9_-]+\.js/)
+      if (!workerMatch) throw new Error('Missing built worker asset')
+
+      return `/static/assets/${workerMatch[0]}`
+    })()
+  }
+
+  return builtWorkerUrlPromise
+}
+
+async function createEngineWorker() {
+  try {
+    return new EngineWorker()
+  } catch (error) {
+    if (!isCrossOriginWorkerError(error)) throw error
+
+    const builtWorkerUrl = await resolveBuiltWorkerUrl()
+    return new Worker(builtWorkerUrl, { type: 'module' })
+  }
+}
 
 export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}) {
   // --- Fetch position or game-end data ---
@@ -131,7 +173,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   // --- Worker setup ---
   try {
-    worker = new Worker(new URL('../chess/worker.js', import.meta.url), { type: 'module' })
+    worker = await createEngineWorker()
     worker.onmessage = handleWorkerMessage
     worker.onerror = () => {
       app.querySelector('#engine-banner').classList.remove('hidden')
@@ -143,6 +185,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   function sendToEngine(cmd) {
     if (worker && workerReady) worker.postMessage({ type: 'cmd', cmd })
+  }
+
+  function teardownWorker() {
+    if (worker) worker.terminate()
+    worker = null
   }
 
   function currentViewedFen() {
@@ -521,9 +568,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!gameOver) showResult('You resigned — Engine wins')
   })
 
-  app.querySelector('#back-btn').addEventListener('click', () => { if (worker) worker.terminate(); navigate('library') })
+  app.querySelector('#back-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
   app.querySelector('#next-position-btn')?.addEventListener('click', () => {
-    if (worker) worker.terminate()
+    teardownWorker()
     navigate('play', nextPositionId, {
       play: { ply: 0, side: null },
     })
@@ -534,7 +581,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     app.querySelector('#result-overlay').classList.add('hidden')
     startGame({ replaceUrl: true })
   })
-  app.querySelector('#back-to-library-btn').addEventListener('click', () => { if (worker) worker.terminate(); navigate('library') })
+  app.querySelector('#back-to-library-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
 
   // --- Start / restart game ---
   function startGame({ replaceUrl = true } = {}) {

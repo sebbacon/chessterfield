@@ -5,6 +5,7 @@
 import { test, expect } from '@playwright/test'
 
 const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+const createdPositionIdsByTest = new Map()
 
 // Click a square on the Chessground board (white orientation assumed)
 async function clickSquare(page, square) {
@@ -19,11 +20,32 @@ async function clickSquare(page, square) {
   )
 }
 
-async function importPosition(page, name) {
+async function importPosition(page, name, testInfo) {
   await page.click('#go-import')
   await page.fill('#fen-input', FEN)
   await page.fill('#name-input', name)
+  const responsePromise = page.waitForResponse((response) =>
+    response.url().includes('/api/positions/') && response.request().method() === 'POST'
+  )
   await page.locator('[type=submit]').click()
+  const response = await responsePromise
+  const data = await response.json()
+  const id = Number.parseInt(data.id, 10)
+  if (Number.isFinite(id)) {
+    const ids = createdPositionIdsByTest.get(testInfo.testId) || []
+    ids.push(id)
+    createdPositionIdsByTest.set(testInfo.testId, ids)
+  }
+  await expect(page.locator('h1')).toHaveText('Positions')
+  return id
+}
+
+async function openImportedPosition(page, id) {
+  await page.goto(`/?view=play&item=${id}`)
+}
+
+function smokeName(base, testInfo) {
+  return `${base} ${testInfo.testId.slice(-6)}`
 }
 
 test('library page loads', async ({ page }) => {
@@ -31,20 +53,37 @@ test('library page loads', async ({ page }) => {
   await expect(page.locator('h1')).toHaveText('Positions')
 })
 
-test('can import a position', async ({ page }) => {
-  await page.goto('/')
-  await importPosition(page, 'Smoke Test Position')
-  await expect(page.locator('.position-card h3').filter({ hasText: 'Smoke Test Position' }).first()).toBeVisible()
+test.afterEach(async ({ request }, testInfo) => {
+  const ids = createdPositionIdsByTest.get(testInfo.testId) || []
+  createdPositionIdsByTest.delete(testInfo.testId)
+  await request.get('/')
+  const storageState = await request.storageState()
+  const csrfToken = storageState.cookies.find(cookie => cookie.name === 'csrftoken')?.value
+  for (const id of ids) {
+    await request.delete(`/api/positions/${id}/`, {
+      failOnStatusCode: false,
+      headers: csrfToken ? { 'X-CSRFToken': csrfToken } : {},
+    })
+  }
 })
 
-test('engine loads, board becomes interactive, and responds to a move', async ({ page }) => {
+test('can import a position', async ({ page }, testInfo) => {
+  const positionName = smokeName('Smoke Test Position', testInfo)
+  await page.goto('/')
+  const id = await importPosition(page, positionName, testInfo)
+  await openImportedPosition(page, id)
+  await expect(page.locator('.pos-info h2')).toHaveText(positionName)
+})
+
+test('engine loads, board becomes interactive, and responds to a move', async ({ page }, testInfo) => {
   const consoleMessages = []
   page.on('console', msg => consoleMessages.push(`[${msg.type()}] ${msg.text()}`))
   page.on('pageerror', err => consoleMessages.push(`[pageerror] ${err.message}`))
   // Setup: import a position
+  const positionName = smokeName('Engine Smoke Test', testInfo)
   await page.goto('/')
-  await importPosition(page, 'Engine Smoke Test')
-  await page.locator('.play-btn').first().click()
+  const id = await importPosition(page, positionName, testInfo)
+  await openImportedPosition(page, id)
 
   // Board must be visible
   await expect(page.locator('#board')).toBeVisible()
@@ -78,7 +117,7 @@ test('engine loads, board becomes interactive, and responds to a move', async ({
   expect(height).not.toBe('50%')
 })
 
-test('responsive layouts stay usable on desktop and mobile', async ({ page }) => {
+test('responsive layouts stay usable on desktop and mobile', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/')
   await expect(page.locator('#go-import')).toBeVisible()
@@ -96,8 +135,8 @@ test('responsive layouts stay usable on desktop and mobile', async ({ page }) =>
   await page.click('#library-nav-close')
   await expect(navToggle).toHaveAttribute('aria-expanded', 'false')
 
-  await importPosition(page, 'Mobile Layout Smoke')
-  await expect(page.locator('.position-card h3').filter({ hasText: 'Mobile Layout Smoke' }).first()).toBeVisible()
+  const positionName = smokeName('Mobile Layout Smoke', testInfo)
+  const id = await importPosition(page, positionName, testInfo)
 
   const cards = await page.locator('.position-card').evaluateAll(nodes => nodes.slice(0, 2).map(node => {
     const rect = node.getBoundingClientRect()
@@ -108,7 +147,7 @@ test('responsive layouts stay usable on desktop and mobile', async ({ page }) =>
     expect(cards[1].y).toBeGreaterThan(cards[0].y)
   }
 
-  await page.locator('.play-btn').first().click()
+  await openImportedPosition(page, id)
   await expect(page.locator('#board')).toBeVisible()
   await expect(page.locator('.move-nav')).toBeVisible()
 

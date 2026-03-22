@@ -63,7 +63,16 @@ describe('Play view game loop', () => {
 
     // import.meta.url not available in JSDOM – stub URL constructor used by mountPlay
     vi.stubGlobal('URL', class {
-      constructor(url) { this.href = String(url) }
+      static createObjectURL = vi.fn(() => 'blob:http://localhost/blob-worker')
+      static revokeObjectURL = vi.fn()
+
+      constructor(url) {
+        this.href = String(url)
+        this.origin = this.href.startsWith('http://localhost')
+          ? 'http://localhost'
+          : 'http://example.com'
+      }
+
       toString() { return this.href }
     })
 
