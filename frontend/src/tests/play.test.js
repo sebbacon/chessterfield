@@ -142,8 +142,17 @@ describe('Play view game loop', () => {
 
     app.querySelector('#next-position-btn').click()
     expect(navigate).toHaveBeenCalledWith('play', 2, {
-      play: { ply: 0, side: 'white' },
+      play: { ply: 0, side: null },
     })
+  })
+
+  it('defaults play side from the FEN turn when none is specified', async () => {
+    mockPosition('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    const activeSide = app.querySelector('.side-btn.active')
+    expect(activeSide?.dataset.side).toBe('black')
   })
 
   it('can open a game at its final position and step through history', async () => {

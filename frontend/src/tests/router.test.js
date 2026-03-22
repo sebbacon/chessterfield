@@ -9,6 +9,7 @@ describe('router state', () => {
     expect(state.view).toBe('play')
     expect(state.itemId).toBe('game:12')
     expect(state.play.ply).toBe(5)
+    expect(state.play.side).toBeNull()
   })
 
   it('builds a library URL with filters', () => {
@@ -45,5 +46,18 @@ describe('router state', () => {
     })
 
     expect(buildUrlFromState(state)).toBe('/?view=play&item=9&ply=0&side=black')
+  })
+
+  it('builds a play URL with white side when explicitly selected', () => {
+    const state = mergeState(DEFAULT_STATE, {
+      view: 'play',
+      itemId: 9,
+      play: {
+        ply: 0,
+        side: 'white',
+      },
+    })
+
+    expect(buildUrlFromState(state)).toBe('/?view=play&item=9&ply=0&side=white')
   })
 })

@@ -88,7 +88,7 @@ describe('Library view', () => {
     expect(app.textContent).toContain('You won')
     expect(syncState).toHaveBeenCalledWith({
       library: { mode: 'games', page: 1, tags: [], viewed: 'all' },
-      play: { ply: null, side: 'white' },
+      play: { ply: null, side: null },
     }, { replace: false })
 
     app.querySelector('.open-game-btn').click()
@@ -129,7 +129,7 @@ describe('Library view', () => {
     expect(app.textContent).not.toContain('Viewed Position')
     expect(syncState).toHaveBeenCalledWith({
       library: { mode: 'positions', page: 1, tags: [], viewed: 'unviewed' },
-      play: { ply: null, side: 'white' },
+      play: { ply: null, side: null },
     }, { replace: false })
   })
 })

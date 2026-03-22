@@ -54,12 +54,12 @@ def test_tag_uniqueness():
         Tag.objects.create(name='endgame')
 
 @pytest.mark.django_db
-def test_position_ordered_newest_first():
+def test_position_ordered_oldest_first():
     pos1 = Position.objects.create(name='First', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     pos2 = Position.objects.create(name='Second', fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
     qs = list(Position.objects.all())
-    assert qs[0] == pos2  # newest first
-    assert qs[1] == pos1
+    assert qs[0] == pos1
+    assert qs[1] == pos2
 
 @pytest.mark.django_db
 def test_position_source_nullable():

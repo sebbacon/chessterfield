@@ -43,4 +43,4 @@ class Position(models.Model):
         return self.name
 
     class Meta:
-        ordering = ['-created_at']
+        ordering = ['created_at', 'id']

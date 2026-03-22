@@ -278,7 +278,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   function bindPlayButtons(container) {
     container.querySelectorAll('.play-btn').forEach(btn => {
       btn.addEventListener('click', () => navigate('play', parseInt(btn.dataset.id), {
-        play: { ply: 0, side: 'white' },
+        play: { ply: 0, side: null },
       }))
     })
   }
@@ -353,7 +353,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
       },
       play: {
         ply: null,
-        side: 'white',
+        side: null,
       },
     }, { replace })
   }

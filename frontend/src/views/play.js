@@ -14,7 +14,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   const isGame = typeof itemId === 'string' && itemId.startsWith('game:')
   let browseOnly = isGame
   let initialHistory = null
-  let initialUserColor = initialPlayState.side === 'black' ? 'black' : 'white'
+  let initialUserColor = normalizePlaySide(initialPlayState.side)
   const resourceId = isGame ? itemId.slice(5) : itemId
   const resourceUrl = isGame ? `/api/games/${resourceId}/` : `/api/positions/${resourceId}/`
   try {
@@ -28,6 +28,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     } else {
       position = data
       initialHistory = [{ fen: data.fen, lastMove: null, moveSan: null }]
+      initialUserColor = initialUserColor || fenSideToColor(data.fen)
     }
   } catch {
     app.innerHTML = `<p class="muted" style="padding:2rem">${isGame ? 'Game' : 'Position'} not found. <button id="back" class="btn-secondary">Back</button></p>`
@@ -524,7 +525,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   app.querySelector('#next-position-btn')?.addEventListener('click', () => {
     if (worker) worker.terminate()
     navigate('play', nextPositionId, {
-      play: { ply: 0, side: userColor },
+      play: { ply: 0, side: null },
     })
   })
 
@@ -617,4 +618,12 @@ function clampPly(value, max, fallback) {
 
 function userColorClass(current, expected) {
   return current === expected ? 'active' : ''
+}
+
+function fenSideToColor(fen) {
+  return fen.split(' ')[1] === 'b' ? 'black' : 'white'
+}
+
+function normalizePlaySide(side) {
+  return side === 'white' || side === 'black' ? side : null
 }

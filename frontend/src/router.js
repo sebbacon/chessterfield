@@ -9,7 +9,7 @@ export const DEFAULT_STATE = {
   },
   play: {
     ply: null,
-    side: 'white',
+    side: null,
   },
 }
 
@@ -38,7 +38,7 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
 
   const item = params.get('item')
   const ply = params.get('ply')
-  const side = params.get('side') === 'black' ? 'black' : 'white'
+  const side = normalizePlaySide(params.get('side'))
 
   return {
     view,
@@ -78,7 +78,7 @@ export function buildUrlFromState(state) {
     params.set('item', String(state.itemId))
     if (state.play.ply !== null) params.set('ply', String(state.play.ply))
     if (typeof state.itemId !== 'string' || !state.itemId.startsWith('game:')) {
-      if (state.play.side === 'black') params.set('side', 'black')
+      if (state.play.side === 'black' || state.play.side === 'white') params.set('side', state.play.side)
     }
   }
 
@@ -135,4 +135,8 @@ function clampPositiveInt(value, fallback) {
 
 function normalizeViewedFilter(value) {
   return value === 'viewed' || value === 'unviewed' ? value : 'all'
+}
+
+function normalizePlaySide(value) {
+  return value === 'white' || value === 'black' ? value : null
 }

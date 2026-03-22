@@ -17,7 +17,7 @@ setup:
 
 # Run Django server using built assets (run `just build` first if needed)
 django:
-    DJANGO_VITE_DEV_MODE=false .venv/bin/python manage.py runserver
+    DJANGO_VITE_DEV_MODE="${DJANGO_VITE_DEV_MODE:-false}" .venv/bin/python manage.py runserver
 
 # Run Vite dev server
 vite:
