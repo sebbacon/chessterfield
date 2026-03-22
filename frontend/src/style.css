@@ -442,6 +442,13 @@ body {
   gap: 0.75rem;
 }
 
+.play-topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .play-topbar-actions {
   display: flex;
   justify-content: flex-end;
@@ -773,8 +780,12 @@ body {
     flex-wrap: wrap;
   }
 
-  .play-topbar > .btn-secondary:first-child {
-    flex: 1 1 auto;
+  .play-topbar-nav {
+    width: 100%;
+  }
+
+  .play-topbar-nav > * {
+    flex: 1 1 0;
   }
 
   .play-topbar-actions {

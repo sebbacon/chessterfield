@@ -146,6 +146,26 @@ def test_get_position(client, position):
     data = json.loads(r.content)
     assert data['id'] == position.id
     assert data['name'] == 'Starting Position'
+    assert data['next_position_id'] is None
+
+
+@pytest.mark.django_db
+def test_get_position_includes_next_position_id(client):
+    import time
+    first = Position.objects.create(
+        name='First',
+        fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    )
+    time.sleep(0.01)
+    second = Position.objects.create(
+        name='Second',
+        fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    )
+
+    r = client.get(f'/api/positions/{first.id}/')
+    data = json.loads(r.content)
+
+    assert data['next_position_id'] == second.id
 
 
 @pytest.mark.django_db
@@ -188,15 +208,15 @@ def test_delete_position_not_found(client):
 
 
 @pytest.mark.django_db
-def test_list_positions_newest_first(client):
+def test_list_positions_oldest_first(client):
     import time
     p1 = Position.objects.create(name='Older', fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
     time.sleep(0.01)
     p2 = Position.objects.create(name='Newer', fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
     r = client.get('/api/positions/')
     data = json.loads(r.content)
-    assert data['results'][0]['name'] == 'Newer'
-    assert data['results'][1]['name'] == 'Older'
+    assert data['results'][0]['name'] == 'Older'
+    assert data['results'][1]['name'] == 'Newer'
 
 
 # --- GET /api/tags/ ---

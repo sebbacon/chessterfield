@@ -1,4 +1,5 @@
 import json
+from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
 from .lichess import build_game_history
@@ -59,6 +60,18 @@ def _apply_tags(position, tag_names):
     position.tags.set(tags)
 
 
+def _next_position(position):
+    return (
+        Position.objects
+        .filter(
+            Q(created_at__gt=position.created_at)
+            | Q(created_at=position.created_at, id__gt=position.id)
+        )
+        .order_by('created_at', 'id')
+        .first()
+    )
+
+
 PAGE_SIZE = 48
 
 
@@ -116,7 +129,10 @@ def positions_detail(request, pk):
         return JsonResponse({'error': 'Not found'}, status=404)
 
     if request.method == 'GET':
-        return JsonResponse(_position_to_dict(pos))
+        data = _position_to_dict(pos)
+        next_position = _next_position(pos)
+        data['next_position_id'] = next_position.id if next_position else None
+        return JsonResponse(data)
 
     if request.method == 'PATCH':
         try:

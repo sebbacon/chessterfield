@@ -38,7 +38,7 @@ const AFTER_E4_E5_FEN = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq 
 
 function mockPosition(fen = STARTING_FEN) {
   vi.stubGlobal('fetch', vi.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 1, name: 'Test', fen, notes: '', tags: [] }) })
+    Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 1, name: 'Test', fen, notes: '', tags: [], next_position_id: null }) })
   ))
 }
 
@@ -128,6 +128,22 @@ describe('Play view game loop', () => {
 
     expect(isPositionViewed(1)).toBe(true)
     expect(app.querySelector('.viewed-pill')?.textContent).toContain('Seen')
+  })
+
+  it('shows a next-position button for saved positions and navigates to it', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 1, name: 'Test', fen: STARTING_FEN, notes: '', tags: [], next_position_id: 2 }),
+      })
+    ))
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    app.querySelector('#next-position-btn').click()
+    expect(navigate).toHaveBeenCalledWith('play', 2, {
+      play: { ply: 0, side: 'white' },
+    })
   })
 
   it('can open a game at its final position and step through history', async () => {

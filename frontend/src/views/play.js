@@ -36,13 +36,17 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   }
 
   const viewedStatus = !isGame ? markPositionViewed(position.id) : null
+  const nextPositionId = !isGame ? position.next_position_id : null
 
   // --- Render layout ---
   app.innerHTML = `
     <div class="play-layout">
       <main class="play-main">
         <div class="play-topbar">
-          <button id="back-btn" class="btn-secondary">← Library</button>
+          <div class="play-topbar-nav">
+            <button id="back-btn" class="btn-secondary">← Library</button>
+            ${nextPositionId ? '<button id="next-position-btn" class="btn-secondary">Next Position →</button>' : ''}
+          </div>
           <div class="play-topbar-actions">
             ${viewedStatus ? `
               <span class="viewed-pill" aria-label="Seen on this device">
@@ -517,6 +521,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   })
 
   app.querySelector('#back-btn').addEventListener('click', () => { if (worker) worker.terminate(); navigate('library') })
+  app.querySelector('#next-position-btn')?.addEventListener('click', () => {
+    if (worker) worker.terminate()
+    navigate('play', nextPositionId, {
+      play: { ply: 0, side: userColor },
+    })
+  })
 
   // --- Result overlay buttons ---
   app.querySelector('#play-again-btn').addEventListener('click', () => {
