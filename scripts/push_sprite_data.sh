@@ -204,8 +204,14 @@ echo "Uploading database snapshot"
 ssh -i "$DEPLOY_KEY_PATH" -p "$LOCAL_PROXY_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new sprite@localhost "mkdir -p '$REMOTE_APP_DIR'"
 scp -i "$DEPLOY_KEY_PATH" -P "$LOCAL_PROXY_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$LOCAL_SNAPSHOT_PATH" "sprite@localhost:$REMOTE_UPLOAD_PATH"
 
-echo "Replacing remote database and restarting Django"
-ssh -i "$DEPLOY_KEY_PATH" -p "$LOCAL_PROXY_PORT" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new sprite@localhost "bash -lc 'set -euo pipefail; cd \"$REMOTE_APP_DIR\"; if [[ -f \"$REMOTE_DB_PATH\" ]]; then cp -p \"$REMOTE_DB_PATH\" \"$REMOTE_DB_PATH.bak\"; fi; mv \"$REMOTE_UPLOAD_PATH\" \"$REMOTE_DB_PATH\"; pkill -f \"manage.py runserver 0.0.0.0:8080 --noreload\" >/dev/null 2>&1 || true'"
+echo "Stopping Django web service"
+sprite -s "$SPRITE_NAME" api /services/web/stop -- -X POST
+
+echo "Replacing remote database"
+sprite -s "$SPRITE_NAME" exec -- bash -lc "set -euo pipefail; cd '$REMOTE_APP_DIR'; if [[ -f '$REMOTE_DB_PATH' ]]; then cp -p '$REMOTE_DB_PATH' '$REMOTE_DB_PATH.bak'; fi; mv '$REMOTE_UPLOAD_PATH' '$REMOTE_DB_PATH'"
+
+echo "Starting Django web service"
+sprite -s "$SPRITE_NAME" api /services/web/start -- -X POST
 
 echo "Sprite database updated:"
 echo "  Local snapshot: $LOCAL_DB_PATH"
