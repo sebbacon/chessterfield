@@ -60,16 +60,29 @@ def _apply_tags(position, tag_names):
     position.tags.set(tags)
 
 
-def _next_position(position):
-    return (
-        Position.objects
-        .filter(
-            Q(created_at__gt=position.created_at)
-            | Q(created_at=position.created_at, id__gt=position.id)
-        )
-        .order_by('created_at', 'id')
-        .first()
-    )
+def _clean_tag_filters(request):
+    tag_filters = []
+    for tag in request.GET.getlist('tag'):
+        cleaned = tag.strip()
+        if cleaned and cleaned not in tag_filters:
+            tag_filters.append(cleaned)
+    return tag_filters
+
+
+def _filter_positions_by_tags(queryset, tag_filters):
+    for tag in tag_filters:
+        queryset = queryset.filter(tags__name=tag)
+    return queryset.distinct()
+
+
+def _next_position(position, tag_filters=None):
+    queryset = Position.objects.all()
+    if tag_filters:
+        queryset = _filter_positions_by_tags(queryset, tag_filters)
+    return queryset.filter(
+        Q(created_at__gt=position.created_at)
+        | Q(created_at=position.created_at, id__gt=position.id)
+    ).order_by('created_at', 'id').first()
 
 
 PAGE_SIZE = 48
@@ -86,16 +99,8 @@ def _get_page_num(request):
 def positions_list(request):
     if request.method == 'GET':
         from django.core.paginator import Paginator
-        qs = Position.objects.all()
-        tag_filters = []
-        for tag in request.GET.getlist('tag'):
-            cleaned = tag.strip()
-            if cleaned and cleaned not in tag_filters:
-                tag_filters.append(cleaned)
-        if tag_filters:
-            for tag in tag_filters:
-                qs = qs.filter(tags__name=tag)
-            qs = qs.distinct()
+        tag_filters = _clean_tag_filters(request)
+        qs = _filter_positions_by_tags(Position.objects.all(), tag_filters)
         paginator = Paginator(qs, PAGE_SIZE)
         page = paginator.get_page(_get_page_num(request))
         return JsonResponse({
@@ -130,7 +135,7 @@ def positions_detail(request, pk):
 
     if request.method == 'GET':
         data = _position_to_dict(pos)
-        next_position = _next_position(pos)
+        next_position = _next_position(pos, _clean_tag_filters(request))
         data['next_position_id'] = next_position.id if next_position else None
         return JsonResponse(data)
 

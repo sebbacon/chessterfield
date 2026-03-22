@@ -169,6 +169,35 @@ def test_get_position_includes_next_position_id(client):
 
 
 @pytest.mark.django_db
+def test_get_position_scopes_next_position_id_to_active_tag_filters(client):
+    opening = Tag.objects.create(name='opening')
+    endgame = Tag.objects.create(name='endgame')
+    first = Position.objects.create(
+        name='First',
+        fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    )
+    second = Position.objects.create(
+        name='Second',
+        fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    )
+    third = Position.objects.create(
+        name='Third',
+        fen='rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+    )
+    first.tags.add(opening)
+    second.tags.add(endgame)
+    third.tags.add(opening)
+
+    first_response = client.get(f'/api/positions/{first.id}/?tag=opening')
+    first_data = json.loads(first_response.content)
+    third_response = client.get(f'/api/positions/{third.id}/?tag=opening')
+    third_data = json.loads(third_response.content)
+
+    assert first_data['next_position_id'] == third.id
+    assert third_data['next_position_id'] is None
+
+
+@pytest.mark.django_db
 def test_get_position_not_found(client):
     r = client.get('/api/positions/9999/')
     assert r.status_code == 404

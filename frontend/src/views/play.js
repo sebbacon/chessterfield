@@ -50,15 +50,18 @@ async function createEngineWorker() {
   }
 }
 
-export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}) {
+export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}, libraryState = {}) {
   // --- Fetch position or game-end data ---
   let position
   const isGame = typeof itemId === 'string' && itemId.startsWith('game:')
+  const activeTagFilters = !isGame && libraryState.mode === 'positions'
+    ? normalizeTagFilters(libraryState.tags)
+    : []
   let browseOnly = isGame
   let initialHistory = null
   let initialUserColor = normalizePlaySide(initialPlayState.side)
   const resourceId = isGame ? itemId.slice(5) : itemId
-  const resourceUrl = isGame ? `/api/games/${resourceId}/` : `/api/positions/${resourceId}/`
+  const resourceUrl = isGame ? `/api/games/${resourceId}/` : buildPositionResourceUrl(resourceId, activeTagFilters)
   try {
     const r = await fetch(resourceUrl)
     if (!r.ok) throw new Error('Not found')
@@ -80,6 +83,8 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   const viewedStatus = !isGame ? markPositionViewed(position.id) : null
   const nextPositionId = !isGame ? position.next_position_id : null
+  const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || activeTagFilters.length > 0)
+  const nextActionLabel = nextPositionId ? 'Next Position →' : 'Back to Library →'
 
   // --- Render layout ---
   app.innerHTML = `
@@ -88,7 +93,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
         <div class="play-topbar">
           <div class="play-topbar-nav">
             <button id="back-btn" class="btn-secondary">← Library</button>
-            ${nextPositionId ? '<button id="next-position-btn" class="btn-secondary">Next Position →</button>' : ''}
+            ${canAdvanceToNextPosition ? `<button id="next-position-btn" class="btn-secondary">${nextActionLabel}</button>` : ''}
           </div>
           <div class="play-topbar-actions">
             ${viewedStatus ? `
@@ -98,6 +103,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
               </span>
             ` : ''}
             <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
+            <button id="restart-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Restart</button>
             <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
           </div>
         </div>
@@ -151,6 +157,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     <div class="result-overlay hidden" id="result-overlay">
       <div class="result-card">
         <h2 id="result-text"></h2>
+        <button id="result-next-position-btn" class="btn-secondary" ${(browseOnly || !canAdvanceToNextPosition) ? 'hidden' : ''}>${nextActionLabel}</button>
         <button id="play-again-btn" class="btn-primary" ${browseOnly ? 'hidden' : ''}>Play Again</button>
         <button id="back-to-library-btn" class="btn-secondary">Back to Library</button>
       </div>
@@ -397,7 +404,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     gameOver = true
     sendToEngine('stop')
     const overlay = app.querySelector('#result-overlay')
+    const nextButton = app.querySelector('#result-next-position-btn')
     app.querySelector('#result-text').textContent = text
+    if (nextButton) nextButton.hidden = !(canAdvanceToNextPosition && text.startsWith('Checkmate'))
     overlay.classList.remove('hidden')
   }
 
@@ -563,18 +572,29 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     sendToEngine('go movetime 1000')
   })
 
+  function goToNextPositionOrLibrary() {
+    teardownWorker()
+    if (nextPositionId) {
+      navigate('play', nextPositionId, {
+        play: { ply: 0, side: null },
+      })
+      return
+    }
+    navigate('library')
+  }
+
   // --- Resign ---
   app.querySelector('#resign-btn').addEventListener('click', () => {
     if (!gameOver) showResult('You resigned — Engine wins')
   })
 
-  app.querySelector('#back-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
-  app.querySelector('#next-position-btn')?.addEventListener('click', () => {
-    teardownWorker()
-    navigate('play', nextPositionId, {
-      play: { ply: 0, side: null },
-    })
+  app.querySelector('#restart-btn').addEventListener('click', () => {
+    if (!browseOnly) startGame({ replaceUrl: true })
   })
+
+  app.querySelector('#back-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
+  app.querySelector('#next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
+  app.querySelector('#result-next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
 
   // --- Result overlay buttons ---
   app.querySelector('#play-again-btn').addEventListener('click', () => {
@@ -673,4 +693,16 @@ function fenSideToColor(fen) {
 
 function normalizePlaySide(side) {
   return side === 'white' || side === 'black' ? side : null
+}
+
+function normalizeTagFilters(tags) {
+  if (!Array.isArray(tags)) return []
+  return [...new Set(tags.map(tag => String(tag).trim()).filter(Boolean))]
+}
+
+function buildPositionResourceUrl(positionId, tagFilters) {
+  const params = new URLSearchParams()
+  tagFilters.forEach(tag => params.append('tag', tag))
+  const query = params.toString()
+  return `/api/positions/${positionId}/${query ? `?${query}` : ''}`
 }

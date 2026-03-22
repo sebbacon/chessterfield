@@ -155,6 +155,28 @@ describe('Play view game loop', () => {
     })
   })
 
+  it('returns to the library at the end of a filtered next-position flow', async () => {
+    vi.stubGlobal('fetch', vi.fn((url) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 1, name: 'Filtered', fen: STARTING_FEN, notes: '', tags: ['endgame'], next_position_id: null }),
+      })
+    ))
+
+    await mountPlay(app, navigate, 1, {}, syncState, {
+      mode: 'positions',
+      page: 2,
+      tags: ['endgame'],
+      viewed: 'all',
+    })
+
+    expect(fetch).toHaveBeenCalledWith('/api/positions/1/?tag=endgame')
+    expect(app.querySelector('#next-position-btn')?.textContent).toContain('Back to Library')
+
+    app.querySelector('#next-position-btn').click()
+    expect(navigate).toHaveBeenCalledWith('library')
+  })
+
   it('defaults play side from the FEN turn when none is specified', async () => {
     mockPosition('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
 
@@ -162,6 +184,54 @@ describe('Play view game loop', () => {
 
     const activeSide = app.querySelector('.side-btn.active')
     expect(activeSide?.dataset.side).toBe('black')
+  })
+
+  it('restarts the current attempt from the starting position', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+    cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    expect(app.querySelector('#move-history').textContent).toContain('e4')
+
+    app.querySelector('#restart-btn').click()
+
+    expect(app.querySelector('#move-history').textContent).not.toContain('e4')
+    expect(app.querySelector('.fen-display')?.textContent).toBe(STARTING_FEN)
+
+    const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain('ucinewgame')
+    expect(cgMock.destroy).toHaveBeenCalled()
+  })
+
+  it('shows next position in the result modal after checkmate and navigates to it', async () => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 1,
+          name: 'Mate in One',
+          fen: '6k1/5Q2/6K1/8/8/8/8/8 w - - 0 1',
+          notes: '',
+          tags: [],
+          next_position_id: 2,
+        }),
+      })
+    ))
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+
+    capturedCgConfig.movable.events.after('f7', 'g7')
+
+    expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
+    expect(app.querySelector('#result-text')?.textContent).toContain('Checkmate')
+    expect(app.querySelector('#result-next-position-btn')?.hidden).toBe(false)
+
+    app.querySelector('#result-next-position-btn').click()
+    expect(navigate).toHaveBeenCalledWith('play', 2, {
+      play: { ply: 0, side: null },
+    })
   })
 
   it('can open a game at its final position and step through history', async () => {

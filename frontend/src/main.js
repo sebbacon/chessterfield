@@ -42,7 +42,7 @@ function renderView() {
       p = mountImport(app, navigate)
       break
     case 'play':
-      p = mountPlay(app, navigate, state.itemId, state.play, syncState)
+      p = mountPlay(app, navigate, state.itemId, state.play, syncState, state.library)
       break
     default:
       p = mountLibrary(app, navigate, state.library, syncState)
