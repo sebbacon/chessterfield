@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js'
 import { Chessground } from 'chessground'
-import { parseStockfishLine, cpToPercent } from '../chess/eval.js'
+import { parseStockfishLine } from '../chess/eval.js'
 import { markPositionViewed } from '../viewed-positions.js'
 import EngineWorker from '../chess/worker.js?worker'
 
@@ -10,6 +10,11 @@ import 'chessground/assets/chessground.brown.css'
 import 'chessground/assets/chessground.cburnett.css'
 
 let builtWorkerUrlPromise = null
+const ANALYSIS_MOVETIME_MS = 1200
+const HINT_MOVETIME_MS = 1000
+const ENGINE_MOVETIME_MS = 3000
+const ANALYSIS_VARIATIONS = 4
+const ANALYSIS_VISIBILITY_STORAGE_KEY = 'chessterfield:analysis-visibility:v1'
 
 function isCrossOriginWorkerError(error) {
   return error instanceof DOMException && error.name === 'SecurityError'
@@ -109,6 +114,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
         </div>
         <div id="board-wrap">
           <div id="board"></div>
+          <div id="board-analysis-indicator" class="board-analysis-indicator" hidden aria-live="polite">
+            <span class="analysis-spinner" aria-hidden="true"></span>
+          </div>
         </div>
       </main>
 
@@ -118,21 +126,15 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           <button id="fwd-move-btn" class="btn-icon" disabled title="Next move" aria-label="Next move">&#9654;</button>
         </div>
         <div class="play-analysis">
-          <div class="eval-bar-wrap">
-            <div class="eval-label" id="eval-white-label"></div>
-            <div class="eval-bar-outer">
-              <div class="eval-bar-fill" id="eval-fill" style="height:50%"></div>
-            </div>
-            <div class="eval-label" id="eval-black-label"></div>
+          <div class="analysis-status" aria-live="polite">
+            <h3 class="analysis-title">Best next moves</h3>
+            <span id="analysis-spinner" class="analysis-spinner" aria-hidden="true"></span>
+            <button id="toggle-analysis-visibility" class="btn-secondary analysis-toggle-btn" type="button"></button>
           </div>
-          <div class="engine-info">
-            <span id="engine-depth">depth —</span>
-            <span id="engine-score">—</span>
-            <span id="eval-delta" class="eval-delta"></span>
-          </div>
+          <div id="analysis-lines" class="analysis-lines"></div>
         </div>
         <div class="move-history-wrap">
-          <h3>Moves</h3>
+          <h3>Past moves</h3>
           <ol id="move-history" class="move-history"></ol>
         </div>
       </aside>
@@ -173,8 +175,10 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let gameOver = false
   let engineMoving = false  // true when engine is making a move (vs just analyzing)
   let hintMode = false      // true when waiting for engine's hint bestmove
-  let pendingEval = null    // latest eval from info lines, committed on bestmove
-  let committedCp = null    // last committed cp (for delta calculation)
+  let pendingEngineGo = false
+  let currentSearch = null
+  let analysisByPly = new Map()
+  let analysisHidden = readAnalysisVisibilityPreference()
   let positionHistory = initialHistory
   let viewIndex = positionHistory.length - 1  // which position in positionHistory is displayed
 
@@ -203,11 +207,69 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     return positionHistory[viewIndex].fen
   }
 
-  function requestPositionAnalysis(fen) {
-    if (!workerReady || engineMoving || hintMode) return
+  function currentViewedPly() {
+    return viewIndex
+  }
+
+  function requestDisplayedAnalysis({ force = false, asHint = false } = {}) {
+    requestAnalysisForPly(currentViewedPly(), currentViewedFen(), { force, asHint })
+  }
+
+  function requestAnalysisForPly(ply, fen, { force = false, asHint = false } = {}) {
+    if (!workerReady || engineMoving || (hintMode && !asHint)) return
+    if (currentSearch && currentSearch.ply === ply && currentSearch.fen === fen && currentSearch.kind === (asHint ? 'hint' : 'analysis')) {
+      return
+    }
+    const existing = analysisByPly.get(ply)
+    if (!force && !asHint && existing?.fen === fen && existing.status === 'complete') {
+      if (ply === viewIndex) renderAnalysisForPly(ply)
+      return
+    }
+
+    currentSearch = {
+      kind: asHint ? 'hint' : 'analysis',
+      ply,
+      fen,
+      lines: new Map(),
+    }
+    analysisByPly.set(ply, {
+      ...(existing || {}),
+      ply,
+      fen,
+      status: 'loading',
+    })
+    if (ply === viewIndex) renderAnalysisForPly(ply)
     sendToEngine('stop')
     sendToEngine(`position fen ${fen}`)
-    sendToEngine('go movetime 1000')
+    sendToEngine(`go movetime ${asHint ? HINT_MOVETIME_MS : ANALYSIS_MOVETIME_MS}`)
+  }
+
+  function requestEngineMove() {
+    if (!workerReady) {
+      pendingEngineGo = true
+      engineMoving = true
+      updateHintBtn()
+      return
+    }
+
+    pendingEngineGo = false
+    currentSearch = {
+      kind: 'engineMove',
+      ply: viewIndex,
+      fen: chess.fen(),
+      lines: new Map(),
+    }
+    const existing = analysisByPly.get(viewIndex)
+    analysisByPly.set(viewIndex, {
+      ...(existing || {}),
+      ply: viewIndex,
+      fen: chess.fen(),
+      status: 'loading',
+    })
+    renderAnalysisForPly(viewIndex)
+    sendToEngine('stop')
+    sendToEngine(`position fen ${chess.fen()}`)
+    sendToEngine(`go movetime ${ENGINE_MOVETIME_MS}`)
   }
 
   function setDisplayedFen(fen) {
@@ -227,32 +289,24 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     const { type, line } = e.data
     if (type === 'ready') {
       workerReady = true
-      // Enable the board now that the engine is ready (if it's the user's turn)
-      if (cg && !browseOnly && isUserTurn() && !gameOver) {
+      sendToEngine(`setoption name MultiPV value ${ANALYSIS_VARIATIONS}`)
+      if (cg && !browseOnly && isUserTurn() && !gameOver && atLatest() && !engineMoving) {
         cg.set({ movable: { color: userColor, dests: toDests(chess) } })
       }
-      if (browseOnly) requestPositionAnalysis(currentViewedFen())
+      if (pendingEngineGo) requestEngineMove()
+      else requestDisplayedAnalysis({ force: true })
       updateHintBtn()
       return
     }
     if (type === 'error') { app.querySelector('#engine-banner').classList.remove('hidden'); return }
     if (type !== 'output') return
 
-    // Buffer eval info — committed on bestmove
     const parsed = parseStockfishLine(line)
-    if (parsed) storePendingEval(parsed)
+    if (parsed) storeSearchLine(parsed)
 
-    // Engine move or hint
-    if (line.startsWith('bestmove') && !gameOver) {
-      commitEval()
+    if (line.startsWith('bestmove')) {
       const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
-      if (hintMode && match) {
-        showHint(match[1])
-        hintMode = false
-      } else if (engineMoving && match) {
-        applyEngineMove(match[1])
-      }
-      engineMoving = false
+      finalizeSearch(match?.[1] || null)
     }
   }
 
@@ -277,82 +331,131 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     btn.disabled = !workerReady || !isUserTurn() || gameOver || engineMoving || !atLatest()
   }
 
-  // --- Eval bar ---
-  // Buffer incoming info lines; only update the bar on bestmove so the
-  // transition animates once from the previous committed position.
-  function storePendingEval({ cp, mate, depth }) {
-    app.querySelector('#engine-depth').textContent = `depth ${depth}`
-    pendingEval = { cp, mate }
+  function storeSearchLine(line) {
+    if (!currentSearch) return
+    const existing = currentSearch.lines.get(line.multipv)
+    if (!existing || line.depth >= existing.depth) {
+      currentSearch.lines.set(line.multipv, line)
+    }
   }
 
-  function commitEval() {
-    if (!pendingEval) return
-    const { cp, mate } = pendingEval
-    pendingEval = null
+  function finalizeSearch(bestmoveUci) {
+    if (!currentSearch) return
 
-    const fill = app.querySelector('#eval-fill')
-    const scoreEl = app.querySelector('#engine-score')
-    const deltaEl = app.querySelector('#eval-delta')
-    const whiteLabel = app.querySelector('#eval-white-label')
-    const blackLabel = app.querySelector('#eval-black-label')
+    const search = currentSearch
+    currentSearch = null
+    const record = buildAnalysisRecord(search, bestmoveUci)
+    if (record) {
+      analysisByPly.set(search.ply, record)
+      updateMoveHistory()
+      if (search.ply === viewIndex) renderAnalysisForPly(search.ply)
+    }
 
-    if (mate !== null) {
-      fill.style.height = (mate > 0 ? 100 : 0) + '%'
-      const label = `M${Math.abs(mate)}`
-      scoreEl.textContent = mate > 0 ? `+${label}` : `-${label}`
-      whiteLabel.textContent = mate > 0 ? label : ''
-      blackLabel.textContent = mate < 0 ? label : ''
-      deltaEl.textContent = ''
-      committedCp = null
-    } else if (cp !== null) {
-      fill.style.height = cpToPercent(cp) + '%'
-      const display = cp > 0 ? `+${(cp / 100).toFixed(1)}` : (cp / 100).toFixed(1)
-      scoreEl.textContent = display
-      whiteLabel.textContent = cp > 0 ? display : ''
-      blackLabel.textContent = cp < 0 ? display : ''
+    if (search.kind === 'hint' && bestmoveUci) {
+      showHint(bestmoveUci)
+      hintMode = false
+      updateHintBtn()
+      return
+    }
 
-      if (committedCp !== null) {
-        const delta = (cp - committedCp) / 100
-        const abs = Math.abs(delta).toFixed(1)
-        deltaEl.textContent = delta >= 0 ? `▲${abs}` : `▼${abs}`
-        deltaEl.className = `eval-delta ${delta >= 0 ? 'positive' : 'negative'}`
-      } else {
-        deltaEl.textContent = ''
-      }
-      committedCp = cp
+    if (search.kind === 'hint') {
+      hintMode = false
+      updateHintBtn()
+      return
+    }
+
+    if (search.kind === 'engineMove') {
+      engineMoving = false
+      updateHintBtn()
+      if (bestmoveUci) applyEngineMove(bestmoveUci)
+      return
+    }
+
+    updateHintBtn()
+  }
+
+  function renderAnalysisForPly(ply) {
+    const record = analysisByPly.get(ply)
+    const analysisEl = app.querySelector('.play-analysis')
+    const titleEl = app.querySelector('.analysis-title')
+    const spinnerEl = app.querySelector('#analysis-spinner')
+    const boardIndicatorEl = app.querySelector('#board-analysis-indicator')
+    const boardSpinnerEl = boardIndicatorEl.querySelector('.analysis-spinner')
+    const toggleEl = app.querySelector('#toggle-analysis-visibility')
+    const linesEl = app.querySelector('#analysis-lines')
+    const loading = record?.status === 'loading' || (currentSearch && currentSearch.ply === ply && currentSearch.fen === currentViewedFen())
+    const showBoardIndicator = analysisHidden && loading
+
+    analysisEl.classList.toggle('analysis-hidden', analysisHidden)
+    titleEl.hidden = analysisHidden
+    toggleEl.textContent = analysisHidden ? 'Show best next moves' : 'Hide'
+    toggleEl.setAttribute('aria-pressed', String(analysisHidden))
+    spinnerEl.className = `analysis-spinner${loading && !analysisHidden ? ' spinning' : ''}`
+    spinnerEl.hidden = analysisHidden
+    boardIndicatorEl.hidden = !showBoardIndicator
+    boardSpinnerEl.className = `analysis-spinner${showBoardIndicator ? ' spinning' : ''}`
+
+    if (analysisHidden) {
+      linesEl.innerHTML = ''
+      return
+    }
+
+    if (record?.variations?.length) {
+      linesEl.innerHTML = renderAnalysisLines(record)
+      return
+    }
+
+    if (loading) {
+      linesEl.innerHTML = renderAnalysisSkeleton()
+    } else {
+      linesEl.innerHTML = '<p class="analysis-placeholder">Step through moves or wait for analysis.</p>'
     }
   }
 
   // --- Move history ---
   function updateMoveHistory() {
     const ol = app.querySelector('#move-history')
-    const history = browseOnly
-      ? positionHistory.slice(1).map(step => step.moveSan || '...')
-      : chess.history()
+    const wrap = app.querySelector('.move-history-wrap')
+    const history = positionHistory.slice(1).map(step => step.moveSan || '...')
     ol.innerHTML = ''
-    for (let i = 0; i < history.length; i += 2) {
+    let historyIndex = 0
+    let moveNumber = fenMoveNumber(positionHistory[0].fen)
+    let turn = fenSideToColor(positionHistory[0].fen)
+
+    while (historyIndex < history.length) {
       const li = document.createElement('li')
-      const w = document.createElement('span')
-      w.className = 'move-token'
-      w.textContent = history[i]
-      w.dataset.idx = i + 1
-      if (viewIndex === i + 1) w.classList.add('current-move')
-      li.appendChild(w)
-      if (history[i + 1] !== undefined) {
-        li.appendChild(document.createTextNode(' '))
-        const b = document.createElement('span')
-        b.className = 'move-token'
-        b.textContent = history[i + 1]
-        b.dataset.idx = i + 2
-        if (viewIndex === i + 2) b.classList.add('current-move')
-        li.appendChild(b)
+      li.className = 'move-history-row'
+
+      const moveNumberEl = document.createElement('span')
+      moveNumberEl.className = 'move-number'
+      moveNumberEl.textContent = `${moveNumber}.`
+      li.appendChild(moveNumberEl)
+
+      const whiteCell = document.createElement('div')
+      whiteCell.className = 'move-cell move-cell-white'
+      const blackCell = document.createElement('div')
+      blackCell.className = 'move-cell move-cell-black'
+
+      if (turn === 'white' && history[historyIndex] !== undefined) {
+        whiteCell.appendChild(createMoveToken(history[historyIndex], historyIndex + 1))
+        historyIndex += 1
+        turn = 'black'
       }
+
+      if (turn === 'black' && history[historyIndex] !== undefined) {
+        blackCell.appendChild(createMoveToken(history[historyIndex], historyIndex + 1))
+        historyIndex += 1
+        turn = 'white'
+        moveNumber += 1
+      }
+
+      li.appendChild(whiteCell)
+      li.appendChild(blackCell)
       ol.appendChild(li)
     }
-    // Scroll current move into view
+
     const cur = ol.querySelector('.current-move')
-    if (cur) cur.scrollIntoView?.({ block: 'nearest' })
-    else ol.scrollTop = ol.scrollHeight
+    if (wrap) keepHistorySelectionVisible(wrap, cur)
   }
 
   // --- History navigation ---
@@ -361,24 +464,22 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   function navigateTo(index, { replace = false } = {}) {
     viewIndex = index
     const { fen, lastMove } = positionHistory[index]
-    const live = atLatest()
-    if (browseOnly) chess = new Chess(fen)
+    chess = new Chess(fen)
     cg.set({
       fen,
       lastMove: lastMove ?? undefined,
       movable: {
         color: userColor,
-        dests: (!browseOnly && live && isUserTurn() && workerReady && !gameOver) ? toDests(chess) : new Map(),
+        dests: canPlayFromViewedPosition() ? toDests(chess) : new Map(),
       },
     })
     setDisplayedFen(fen)
     updateMoveHistory()
     updateNavButtons()
     updateHintBtn()
-    if (browseOnly) {
-      syncPlayState(replace)
-      requestPositionAnalysis(fen)
-    }
+    renderAnalysisForPly(index)
+    if (browseOnly) syncPlayState(replace)
+    requestAnalysisForPly(index, fen)
   }
 
   function updateNavButtons() {
@@ -402,6 +503,10 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   function showResult(text) {
     gameOver = true
+    engineMoving = false
+    hintMode = false
+    pendingEngineGo = false
+    currentSearch = null
     sendToEngine('stop')
     const overlay = app.querySelector('#result-overlay')
     const nextButton = app.querySelector('#result-next-position-btn')
@@ -425,6 +530,55 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     return (turn === 'w' && userColor === 'white') || (turn === 'b' && userColor === 'black')
   }
 
+  function canSelectAnalysisMove() {
+    return !browseOnly && workerReady && !gameOver && !engineMoving && atLatest() && isUserTurn()
+  }
+
+  function canPlayFromViewedPosition() {
+    if (browseOnly || !workerReady || engineMoving) return false
+    if (!isUserTurn()) return false
+    if (gameOver && atLatest()) return false
+    return true
+  }
+
+  function applyUserMove(orig, dest, promotion = 'q') {
+    if (!atLatest()) {
+      positionHistory = positionHistory.slice(0, viewIndex + 1)
+      gameOver = false
+      app.querySelector('#result-overlay').classList.add('hidden')
+    }
+
+    const move = chess.move({ from: orig, to: dest, promotion })
+    if (!move) return false
+
+    hintMode = false
+    clearHint()
+    positionHistory.push({ fen: chess.fen(), lastMove: [orig, dest], moveSan: move.san })
+    viewIndex = positionHistory.length - 1
+    updateMoveHistory()
+    updateNavButtons()
+    renderAnalysisForPly(viewIndex)
+    cg.set({
+      fen: chess.fen(),
+      turnColor: chess.turn() === 'w' ? 'white' : 'black',
+      movable: { color: userColor, dests: new Map() },
+    })
+    setDisplayedFen(chess.fen())
+
+    const result = checkGameEnd()
+    if (result) {
+      showResult(result)
+      return true
+    }
+
+    if (workerReady) {
+      engineMoving = true
+      updateHintBtn()
+      requestEngineMove()
+    }
+    return true
+  }
+
   // --- Apply engine move ---
   function applyEngineMove(uciMove) {
     if (gameOver) return
@@ -434,10 +588,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
     const move = chess.move({ from, to, promotion })
     if (!move) return
-    positionHistory.push({ fen: chess.fen(), lastMove: [from, to] })
+    positionHistory.push({ fen: chess.fen(), lastMove: [from, to], moveSan: move.san })
     viewIndex = positionHistory.length - 1
     updateMoveHistory()
     updateNavButtons()
+    renderAnalysisForPly(viewIndex)
 
     cg.set({
       fen: chess.fen(),
@@ -453,13 +608,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     const result = checkGameEnd()
     if (result) { showResult(result); return }
 
-    // After engine moves, analyse user's position for the eval bar (no move applied)
-    if (workerReady) {
-      engineMoving = false
-      updateHintBtn()
-      sendToEngine(`position fen ${chess.fen()}`)
-      sendToEngine('go movetime 3000')
-    }
+    requestDisplayedAnalysis({ force: true })
   }
 
   // --- Chessground init ---
@@ -475,37 +624,10 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       : {
           free: false,
           color: userColor,
-          dests: (isUserTurn() && workerReady) ? toDests(chess) : new Map(),
+          dests: canPlayFromViewedPosition() ? toDests(chess) : new Map(),
           events: {
             after(orig, dest) {
-              // Promotion: always promote to queen for simplicity
-              const move = chess.move({ from: orig, to: dest, promotion: 'q' })
-              if (!move) return
-
-              hintMode = false
-              clearHint()
-              positionHistory.push({ fen: chess.fen(), lastMove: [orig, dest] })
-              viewIndex = positionHistory.length - 1
-              updateMoveHistory()
-              updateNavButtons()
-              cg.set({
-                fen: chess.fen(),
-                turnColor: chess.turn() === 'w' ? 'white' : 'black',
-                movable: { color: userColor, dests: new Map() }, // disable while engine thinks
-              })
-              setDisplayedFen(chess.fen())
-
-              const result = checkGameEnd()
-              if (result) { showResult(result); return }
-
-              // Trigger engine move
-              if (workerReady) {
-                engineMoving = true
-                updateHintBtn()
-                sendToEngine('stop')
-                sendToEngine(`position fen ${chess.fen()}`)
-                sendToEngine('go movetime 3000')
-              }
+              applyUserMove(orig, dest, 'q')
             },
           },
         }
@@ -522,23 +644,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   // --- Engine first move (when engine goes first) ---
   function engineGoFirst() {
-    if (workerReady) {
-      engineMoving = true
-      sendToEngine(`position fen ${chess.fen()}`)
-      sendToEngine('go movetime 3000')
-    } else if (worker) {
-      // Worker not ready yet — wait for ready message then trigger
-      const originalHandler = worker.onmessage
-      worker.onmessage = (e) => {
-        originalHandler(e)
-        if (e.data.type === 'ready') {
-          engineMoving = true
-          sendToEngine(`position fen ${chess.fen()}`)
-          sendToEngine('go movetime 3000')
-          worker.onmessage = originalHandler
-        }
-      }
-    }
+    engineMoving = true
+    updateHintBtn()
+    requestEngineMove()
   }
 
   // --- Side selector ---
@@ -562,14 +670,24 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     const token = e.target.closest('.move-token')
     if (token) navigateTo(parseInt(token.dataset.idx))
   })
+  app.querySelector('#toggle-analysis-visibility').addEventListener('click', () => {
+    analysisHidden = !analysisHidden
+    writeAnalysisVisibilityPreference(analysisHidden)
+    renderAnalysisForPly(viewIndex)
+  })
+  app.querySelector('#analysis-lines').addEventListener('click', e => {
+    const button = e.target.closest('.analysis-line-btn')
+    if (!button || button.disabled || !canSelectAnalysisMove()) return
+    const uci = button.dataset.uci
+    if (!uci || uci.length < 4) return
+    applyUserMove(uci.slice(0, 2), uci.slice(2, 4), uci[4] || 'q')
+  })
 
   // --- Hint ---
   app.querySelector('#hint-btn').addEventListener('click', () => {
     if (!workerReady || !isUserTurn() || gameOver || engineMoving) return
     hintMode = true
-    sendToEngine('stop')
-    sendToEngine(`position fen ${chess.fen()}`)
-    sendToEngine('go movetime 1000')
+    requestDisplayedAnalysis({ force: true, asHint: true })
   })
 
   function goToNextPositionOrLibrary() {
@@ -608,8 +726,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     gameOver = false
     engineMoving = false
     hintMode = false
-    pendingEval = null
-    committedCp = null
+    pendingEngineGo = false
+    currentSearch = null
+    analysisByPly = new Map()
     positionHistory = initialHistory.map(step => ({ ...step }))
     viewIndex = browseOnly
       ? clampPly(initialPlayState.ply, positionHistory.length - 1, positionHistory.length - 1)
@@ -618,12 +737,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     updateMoveHistory()
     updateNavButtons()
     setDisplayedFen(positionHistory[viewIndex].fen)
-    app.querySelector('#eval-fill').style.height = '50%'
-    app.querySelector('#engine-depth').textContent = 'depth —'
-    app.querySelector('#engine-score').textContent = '—'
-    app.querySelector('#eval-delta').textContent = ''
-    app.querySelector('#eval-white-label').textContent = ''
-    app.querySelector('#eval-black-label').textContent = ''
+    app.querySelector('#analysis-spinner').className = 'analysis-spinner'
+    app.querySelector('#analysis-lines').innerHTML = '<p class="analysis-placeholder">Step through moves or wait for analysis.</p>'
+    renderAnalysisForPly(viewIndex)
 
     if (cg) cg.destroy()
     initBoard()
@@ -643,9 +759,184 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
                             (fenTurn === 'b' && userColor === 'white')
 
     if (engineGoesFirst) {
-      // Disable board until engine responds
       cg.set({ movable: { color: userColor, dests: new Map() } })
       engineGoFirst()
+    } else if (workerReady) {
+      requestDisplayedAnalysis({ force: true })
+    }
+  }
+
+  function createMoveToken(text, ply) {
+    const wrap = document.createElement('span')
+    wrap.className = 'move-token-wrap'
+
+    const token = document.createElement('span')
+    token.className = 'move-token'
+    token.textContent = text
+    token.dataset.idx = ply
+    if (viewIndex === ply) token.classList.add('current-move')
+
+    const assessment = moveAssessmentForPly(ply)
+    if (assessment) token.classList.add(assessment.className)
+    wrap.appendChild(token)
+
+    if (assessment) {
+      const badge = document.createElement('span')
+      badge.className = `move-annotation-badge ${assessment.className}`
+      badge.textContent = assessment.symbol
+      badge.title = assessment.label
+      wrap.appendChild(badge)
+    }
+
+    const analysis = analysisByPly.get(ply)
+    if (analysis?.score) {
+      const chip = document.createElement('span')
+      chip.className = 'move-eval-chip'
+      chip.textContent = formatScoreCompact(analysis.score)
+      chip.title = assessment ? `${assessment.label} move` : 'Engine evaluation'
+      wrap.appendChild(chip)
+    }
+
+    return wrap
+  }
+
+  function buildAnalysisRecord(search, bestmoveUci) {
+    const variations = [...search.lines.values()]
+      .sort((a, b) => a.multipv - b.multipv)
+      .slice(0, ANALYSIS_VARIATIONS)
+      .map(line => ({
+        ...line,
+        firstMove: line.pv[0] || bestmoveUci || null,
+        san: uciToSan(search.fen, line.pv[0] || bestmoveUci || null),
+      }))
+
+    if (variations.length === 0) return null
+
+    return {
+      ply: search.ply,
+      fen: search.fen,
+      status: 'complete',
+      depth: highestDepth(search.lines),
+      score: { cp: variations[0].cp, mate: variations[0].mate },
+      variations,
+    }
+  }
+
+  function highestDepth(lines) {
+    return Math.max(...[...lines.values()].map(line => line.depth))
+  }
+
+  function renderAnalysisLines(record) {
+    if (!record.variations.length) {
+      return '<p class="analysis-placeholder">No analysis lines yet.</p>'
+    }
+
+    const selectable = canSelectAnalysisMove()
+    return record.variations.map(line => `
+      <button
+        class="analysis-line-btn"
+        type="button"
+        data-uci="${escapeHtml(line.firstMove || '')}"
+        ${selectable && line.firstMove ? '' : 'disabled'}
+      >
+        <span class="analysis-rank">${line.multipv}.</span>
+        <span class="analysis-move">${escapeHtml(line.san || line.firstMove || '...')}</span>
+        <span class="analysis-score">${escapeHtml(formatScoreCompact(line))}</span>
+      </button>
+    `).join('')
+  }
+
+  function renderAnalysisSkeleton() {
+    return Array.from({ length: ANALYSIS_VARIATIONS }, () => '<div class="analysis-line-skeleton"></div>').join('')
+  }
+
+  function moveAssessmentForPly(ply) {
+    if (ply === 0) return null
+    const previousStep = positionHistory[ply - 1]
+    const currentStep = positionHistory[ply]
+    const analysis = analysisByPly.get(ply - 1)
+    const moveUci = lastMoveToUci(currentStep?.lastMove)
+    if (!analysis?.variations?.length || !moveUci) return null
+
+    const mover = fenSideToColor(previousStep.fen)
+    const bestScore = scoreForColor(analysis.variations[0], mover)
+    if (bestScore === null) return null
+
+    const matchedVariation = analysis.variations.find(line => sameMove(line.firstMove, moveUci))
+    const actualScore = matchedVariation
+      ? scoreForColor(matchedVariation, mover)
+      : scoreForColor(analysisByPly.get(ply)?.score, mover)
+    if (actualScore === null) return null
+
+    const loss = Math.max(0, bestScore - actualScore)
+    if (matchedVariation && sameMove(matchedVariation.firstMove, analysis.variations[0].firstMove)) return qualityMeta('best')
+    if (loss <= 60) return qualityMeta('good')
+    if (loss <= 120) return qualityMeta('inaccuracy')
+    if (loss <= 250) return qualityMeta('mistake')
+    return qualityMeta('blunder')
+  }
+
+  function qualityMeta(kind) {
+    switch (kind) {
+      case 'best':
+        return { label: 'Best move', className: 'quality-good', symbol: '!' }
+      case 'good':
+        return { label: 'Good move', className: 'quality-good', symbol: '!' }
+      case 'inaccuracy':
+        return { label: 'Inaccuracy', className: 'quality-inaccuracy', symbol: '?!' }
+      case 'mistake':
+        return { label: 'Mistake', className: 'quality-mistake', symbol: '?' }
+      default:
+        return { label: 'Blunder', className: 'quality-blunder', symbol: '??' }
+    }
+  }
+
+  function formatScoreCompact(score) {
+    if (!score) return '—'
+    if (score.mate !== null) {
+      return `${score.mate > 0 ? '+' : '-'}M${Math.abs(score.mate)}`
+    }
+    const cp = score.cp || 0
+    return cp > 0 ? `+${(cp / 100).toFixed(1)}` : (cp / 100).toFixed(1)
+  }
+
+  function scoreToNumeric(score) {
+    if (!score) return null
+    if (score.mate !== null) {
+      return Math.sign(score.mate) * (100000 - Math.min(Math.abs(score.mate), 999))
+    }
+    if (score.cp === null || score.cp === undefined) return null
+    return score.cp
+  }
+
+  function scoreForColor(score, color) {
+    const numeric = scoreToNumeric(score)
+    if (numeric === null) return null
+    return color === 'white' ? numeric : -numeric
+  }
+
+  function lastMoveToUci(lastMove) {
+    if (!Array.isArray(lastMove) || lastMove.length < 2) return null
+    return `${lastMove[0]}${lastMove[1]}`
+  }
+
+  function sameMove(left, right) {
+    if (!left || !right) return false
+    return left.slice(0, 4) === right.slice(0, 4)
+  }
+
+  function uciToSan(fen, uciMove) {
+    if (!uciMove) return null
+    try {
+      const board = new Chess(fen)
+      const move = board.move({
+        from: uciMove.slice(0, 2),
+        to: uciMove.slice(2, 4),
+        promotion: uciMove[4] || undefined,
+      })
+      return move?.san || uciMove
+    } catch {
+      return uciMove
     }
   }
 
@@ -691,6 +982,11 @@ function fenSideToColor(fen) {
   return fen.split(' ')[1] === 'b' ? 'black' : 'white'
 }
 
+function fenMoveNumber(fen) {
+  const moveNumber = Number.parseInt(fen.split(' ')[5], 10)
+  return Number.isFinite(moveNumber) && moveNumber > 0 ? moveNumber : 1
+}
+
 function normalizePlaySide(side) {
   return side === 'white' || side === 'black' ? side : null
 }
@@ -705,4 +1001,38 @@ function buildPositionResourceUrl(positionId, tagFilters) {
   tagFilters.forEach(tag => params.append('tag', tag))
   const query = params.toString()
   return `/api/positions/${positionId}/${query ? `?${query}` : ''}`
+}
+
+function keepHistorySelectionVisible(container, currentMoveEl) {
+  if (!currentMoveEl) {
+    container.scrollTop = container.scrollHeight
+    return
+  }
+  if (container.clientHeight <= 0 || container.scrollHeight <= container.clientHeight) return
+
+  const row = currentMoveEl.closest('li') || currentMoveEl
+  const top = row.offsetTop
+  const bottom = top + row.offsetHeight
+  const visibleTop = container.scrollTop
+  const visibleBottom = visibleTop + container.clientHeight
+
+  if (top < visibleTop) {
+    container.scrollTop = top
+  } else if (bottom > visibleBottom) {
+    container.scrollTop = bottom - container.clientHeight
+  }
+}
+
+function readAnalysisVisibilityPreference() {
+  if (!hasLocalStorage()) return false
+  return window.localStorage.getItem(ANALYSIS_VISIBILITY_STORAGE_KEY) === 'hidden'
+}
+
+function writeAnalysisVisibilityPreference(hidden) {
+  if (!hasLocalStorage()) return
+  window.localStorage.setItem(ANALYSIS_VISIBILITY_STORAGE_KEY, hidden ? 'hidden' : 'shown')
+}
+
+function hasLocalStorage() {
+  return typeof window !== 'undefined' && window.localStorage
 }

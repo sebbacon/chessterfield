@@ -132,6 +132,147 @@ describe('Play view game loop', () => {
     expect(lastSet?.movable?.dests).not.toEqual(new Map())
   })
 
+  it('analyses the starting position immediately when the engine becomes ready', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+
+    const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain('setoption name MultiPV value 4')
+    expect(sentCmds).toContain(`position fen ${STARTING_FEN}`)
+    expect(sentCmds).toContain('go movetime 1200')
+  })
+
+  it('renders multipv alternatives and move-quality signals from engine analysis', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    expect(app.querySelector('#analysis-spinner')?.className).toContain('spinning')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 52 nodes 8000 time 120 pv e2e4 e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 2 score cp 31 nodes 8000 time 120 pv d2d4 d7d5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 3 score cp 18 nodes 8000 time 120 pv g1f3 d7d5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 4 score cp 10 nodes 8000 time 120 pv c2c4 e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+
+    expect(app.querySelector('#analysis-spinner')?.className).not.toContain('spinning')
+    expect(app.querySelector('#analysis-lines')?.textContent).toContain('e4')
+    expect(app.querySelector('#analysis-lines')?.textContent).toContain('d4')
+
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 14 seldepth 18 multipv 1 score cp 40 nodes 4000 time 80 pv e7e5 g1f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+
+    expect(app.querySelector('.move-token[data-idx="1"]')?.className).toContain('quality-good')
+    expect(app.querySelector('.move-annotation-badge')?.textContent).toBe('!')
+    expect(app.querySelector('.move-eval-chip')?.textContent).toBe('+0.4')
+  })
+
+  it('lets the user click an analyzed candidate move to play it', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+    cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 52 nodes 8000 time 120 pv e2e4 e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 2 score cp 31 nodes 8000 time 120 pv d2d4 d7d5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+
+    const suggestion = app.querySelector('.analysis-line-btn[data-uci="e2e4"]')
+    expect(suggestion?.disabled).toBe(false)
+
+    suggestion.click()
+
+    expect(app.querySelector('#move-history').textContent).toContain('e4')
+    const lastCall = cgMock.set.mock.calls.at(-1)?.[0]
+    expect(lastCall?.fen).toBe(AFTER_E4_FEN)
+
+    const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain(`position fen ${AFTER_E4_FEN}`)
+    expect(sentCmds).toContain('go movetime 3000')
+  })
+
+  it('lets the user restart from an earlier ply by playing from history', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+    cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 10 seldepth 12 multipv 1 score cp -30 nodes 5000 time 50 pv e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+
+    app.querySelector('#back-move-btn').click()
+    app.querySelector('#back-move-btn').click()
+
+    capturedCgConfig.movable.events.after('d2', 'd4')
+
+    expect(app.querySelector('#move-history').textContent).toContain('d4')
+    expect(app.querySelector('#move-history').textContent).not.toContain('e4')
+    expect(app.querySelector('#move-history').textContent).not.toContain('e5')
+
+    const lastCall = cgMock.set.mock.calls.at(-1)?.[0]
+    expect(lastCall?.fen).toBe('rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1')
+
+    const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain('position fen rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1')
+    expect(sentCmds).toContain('go movetime 3000')
+  })
+
+  it('keeps the full past-moves list visible when stepping back through the line', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 10 seldepth 12 multipv 1 score cp -30 nodes 5000 time 50 pv e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+
+    app.querySelector('#back-move-btn').click()
+
+    expect(app.querySelector('#move-history')?.textContent).toContain('e4')
+    expect(app.querySelector('#move-history')?.textContent).toContain('e5')
+    expect(app.querySelector('.move-token.current-move')?.dataset.idx).toBe('1')
+  })
+
+  it('does not use scrollIntoView when history updates', async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 10 seldepth 12 multipv 1 score cp -30 nodes 5000 time 50 pv e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+    app.querySelector('#back-move-btn').click()
+
+    expect(scrollIntoView).not.toHaveBeenCalled()
+  })
+
+  it('persists hidden best-next-moves visibility between play screens', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    app.querySelector('#toggle-analysis-visibility')?.click()
+
+    expect(app.querySelector('#analysis-lines')?.textContent).toBe('')
+    expect(app.querySelector('#analysis-spinner')?.hidden).toBe(true)
+    expect(app.querySelector('#board-analysis-indicator')?.hidden).toBe(false)
+    expect(app.querySelector('#board-analysis-indicator .analysis-spinner')?.className).toContain('spinning')
+    expect(window.localStorage.getItem('chessterfield:analysis-visibility:v1')).toBe('hidden')
+
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 52 nodes 8000 time 120 pv e2e4 e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+
+    expect(app.querySelector('#board-analysis-indicator')?.hidden).toBe(true)
+
+    app.remove()
+    app = makeApp()
+    await mountPlay(app, navigate, 2, {}, syncState)
+
+    expect(app.querySelector('#toggle-analysis-visibility')?.textContent).toBe('Show best next moves')
+    expect(app.querySelector('#analysis-lines')?.textContent).toBe('')
+    expect(app.querySelector('#analysis-spinner')?.hidden).toBe(true)
+    expect(app.querySelector('#board-analysis-indicator')?.hidden).toBe(true)
+  })
+
   it('marks saved positions as viewed locally and shows a note', async () => {
     await mountPlay(app, navigate, 1, {}, syncState)
 
@@ -184,6 +325,20 @@ describe('Play view game loop', () => {
 
     const activeSide = app.querySelector('.side-btn.active')
     expect(activeSide?.dataset.side).toBe('black')
+  })
+
+  it('keeps move history aligned in white and black columns when black moves first', async () => {
+    mockPosition('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+
+    capturedCgConfig.movable.events.after('e7', 'e5')
+
+    const firstRow = app.querySelector('.move-history li')
+    expect(firstRow?.querySelector('.move-number')?.textContent).toBe('1.')
+    expect(firstRow?.querySelector('.move-cell-white')?.textContent.trim()).toBe('')
+    expect(firstRow?.querySelector('.move-cell-black')?.textContent).toContain('e5')
   })
 
   it('restarts the current attempt from the starting position', async () => {
@@ -266,7 +421,7 @@ describe('Play view game loop', () => {
     mockWorker.onmessage({ data: { type: 'ready' } })
     let sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
     expect(sentCmds).toContain(`position fen ${AFTER_E4_E5_FEN}`)
-    expect(sentCmds).toContain('go movetime 1000')
+    expect(sentCmds).toContain('go movetime 1200')
 
     app.querySelector('#back-move-btn').click()
 
