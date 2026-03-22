@@ -1,4 +1,5 @@
 import { fenToMiniBoard } from '../chess/miniboard.js'
+import { buildUrlFromState } from '../router.js'
 import { getViewedPositionIds } from '../viewed-positions.js'
 
 export async function mountLibrary(app, navigate, initialState = {}, syncState = () => {}) {
@@ -240,8 +241,19 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
 
   function positionCardHtml(p) {
     const viewed = viewedPositionIds.has(String(p.id))
+    const href = buildUrlFromState({
+      view: 'play',
+      itemId: p.id,
+      library: {
+        mode,
+        page: pages.positions.current,
+        tags: [...selectedTags],
+        viewed: viewedFilter,
+      },
+      play: { ply: 0, side: null },
+    })
     return `
-      <div class="position-card">
+      <a class="position-card position-card-link" data-id="${p.id}" href="${escapeHtml(href)}">
         <div class="position-miniboard">
           <span
             class="position-status-indicator ${viewed ? 'viewed' : 'unviewed'}"
@@ -255,8 +267,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
           <h3>${escapeHtml(p.name)}</h3>
           <div class="tags">${p.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
         </div>
-        <button class="btn-primary play-btn" data-id="${p.id}">Play</button>
-      </div>
+      </a>
     `
   }
 
@@ -275,11 +286,14 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     `
   }
 
-  function bindPlayButtons(container) {
-    container.querySelectorAll('.play-btn').forEach(btn => {
-      btn.addEventListener('click', () => navigate('play', parseInt(btn.dataset.id), {
-        play: { ply: 0, side: null },
-      }))
+  function bindPositionCards(container) {
+    container.querySelectorAll('.position-card-link').forEach(card => {
+      card.addEventListener('click', event => {
+        event.preventDefault()
+        navigate('play', parseInt(card.dataset.id, 10), {
+          play: { ply: 0, side: null },
+        })
+      })
     })
   }
 
@@ -298,7 +312,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
       return
     }
     grid.innerHTML = positions.map(positionCardHtml).join('') + loadMoreHtml()
-    bindPlayButtons(grid)
+    bindPositionCards(grid)
     bindLoadMore(grid)
   }
 
@@ -322,7 +336,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     wrapper.innerHTML = items.map(renderCard).join('') + loadMoreHtml()
     while (wrapper.firstChild) frag.appendChild(wrapper.firstChild)
     grid.appendChild(frag)
-    bindPlayButtons(grid)
+    bindPositionCards(grid)
     bindOpenGameButtons(grid)
     bindLoadMore(grid)
   }

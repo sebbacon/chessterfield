@@ -132,4 +132,20 @@ describe('Library view', () => {
       play: { ply: null, side: null },
     }, { replace: false })
   })
+
+  it('uses the whole position card as the play link', async () => {
+    await mountLibrary(app, navigate, {}, syncState)
+
+    expect(app.querySelector('.play-btn')).toBeNull()
+
+    const card = app.querySelector('.position-card-link')
+    expect(card?.getAttribute('href')).toContain('view=play')
+    expect(card?.getAttribute('href')).toContain('item=1')
+
+    card.click()
+
+    expect(navigate).toHaveBeenCalledWith('play', 1, {
+      play: { ply: 0, side: null },
+    })
+  })
 })
