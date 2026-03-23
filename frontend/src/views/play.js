@@ -393,6 +393,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     spinnerEl.className = `analysis-spinner${loading && !analysisHidden ? ' spinning' : ''}`
     spinnerEl.hidden = analysisHidden
     boardIndicatorEl.hidden = !showBoardIndicator
+    boardIndicatorEl.classList.toggle('active', showBoardIndicator)
     boardSpinnerEl.className = `analysis-spinner${showBoardIndicator ? ' spinning' : ''}`
 
     if (analysisHidden) {
