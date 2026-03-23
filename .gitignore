@@ -10,3 +10,4 @@ frontend/dist/
 playwright-report/
 tmp/
 chessbook/
+.DS_Store
