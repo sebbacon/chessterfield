@@ -1,0 +1,1133 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# ///
+
+from __future__ import annotations
+
+import argparse
+import csv
+import hashlib
+import json
+import math
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
+from typing import Iterable
+
+MIN_WORK_HOURS_SHARE = 0.03
+MAX_WORK_HOURS_SHARE = 0.06
+MIN_COMMIT_GAP_MINUTES = 10
+MIN_COMMIT_GAP_JITTER_MINUTES = (1, 4)
+WINDOW_START_JITTER_MINUTES = (1, 4)
+WEEKDAY_VALID_START = time(7, 0)
+WEEKDAY_EVENING_END = time(23, 59, 59)
+WEEKEND_VALID_START = time(8, 0)
+WEEKEND_VALID_END = time(21, 0)
+
+
+@dataclass(frozen=True)
+class Commit:
+    sha: str
+    original_at: datetime
+
+
+@dataclass(frozen=True)
+class ProposedCommit:
+    sha: str
+    original_at: datetime
+    proposed_at: datetime
+    original_in_work_hours: bool
+    proposed_in_work_hours: bool
+    shift_seconds: int
+    status: str
+
+
+@dataclass(frozen=True)
+class ScheduledCommit:
+    sha: str
+    proposed_author_date: str
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Simulate and apply a git commit timestamp rewrite schedule from one "
+            "standalone script."
+        )
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    simulate = subparsers.add_parser(
+        "simulate",
+        help="Generate a proposed commit timestamp schedule.",
+    )
+    simulate.add_argument(
+        "--repo",
+        default=".",
+        help="Path to the git repository to inspect. Default: current directory.",
+    )
+    simulate.add_argument(
+        "--reference-now",
+        help=(
+            "Reference timestamp in ISO 8601 form. Proposed dates are kept strictly "
+            "before this time. Default: current local time."
+        ),
+    )
+    simulate.add_argument(
+        "--workday-start",
+        default="09:30",
+        help="Work-hours start in HH:MM, Monday to Friday. Default: 09:30.",
+    )
+    simulate.add_argument(
+        "--workday-end",
+        default="16:30",
+        help="Work-hours end in HH:MM, Monday to Friday. Default: 16:30.",
+    )
+    simulate.add_argument(
+        "--format",
+        choices=("json", "csv"),
+        default="json",
+        help="Output format. Default: json.",
+    )
+
+    rewrite = subparsers.add_parser(
+        "rewrite",
+        help="Rewrite git history to match a generated schedule.",
+    )
+    rewrite.add_argument(
+        "schedule",
+        help="Path to the JSON schedule file.",
+    )
+    rewrite.add_argument(
+        "--repo",
+        default=".",
+        help="Path to the git repository to rewrite. Default: current directory.",
+    )
+    rewrite.add_argument(
+        "--ref",
+        action="append",
+        dest="refs",
+        default=[],
+        help=(
+            "Ref to rewrite. Repeat to target multiple refs. Defaults to the current "
+            "branch, or HEAD if detached."
+        ),
+    )
+    rewrite.add_argument(
+        "--all-refs",
+        action="store_true",
+        help="Rewrite all refs reachable via --all instead of the current branch.",
+    )
+    rewrite.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow rewriting even if the repository has staged, unstaged, or untracked files.",
+    )
+    rewrite.add_argument(
+        "--skip-backup-tag",
+        action="store_true",
+        help=(
+            "Do not create pre-rewrite backup tags for explicit target refs. "
+            "Git filter-branch still keeps the original refs under refs/original/."
+        ),
+    )
+    rewrite.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate inputs and print the rewrite plan without changing history.",
+    )
+
+    oneshot = subparsers.add_parser(
+        "oneshot",
+        help="Generate a schedule and immediately rewrite history in one invocation.",
+    )
+    oneshot.add_argument(
+        "--repo",
+        default=".",
+        help="Path to the git repository to rewrite. Default: current directory.",
+    )
+    oneshot.add_argument(
+        "--reference-now",
+        help=(
+            "Reference timestamp in ISO 8601 form. Proposed dates are kept strictly "
+            "before this time. Default: current local time."
+        ),
+    )
+    oneshot.add_argument(
+        "--workday-start",
+        default="09:30",
+        help="Work-hours start in HH:MM, Monday to Friday. Default: 09:30.",
+    )
+    oneshot.add_argument(
+        "--workday-end",
+        default="16:30",
+        help="Work-hours end in HH:MM, Monday to Friday. Default: 16:30.",
+    )
+    oneshot.add_argument(
+        "--ref",
+        action="append",
+        dest="refs",
+        default=[],
+        help=(
+            "Ref to rewrite. Repeat to target multiple refs. Defaults to the current "
+            "branch, or HEAD if detached."
+        ),
+    )
+    oneshot.add_argument(
+        "--all-refs",
+        action="store_true",
+        help="Rewrite all refs reachable via --all instead of the current branch.",
+    )
+    oneshot.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="Allow rewriting even if the repository has staged, unstaged, or untracked files.",
+    )
+    oneshot.add_argument(
+        "--skip-backup-tag",
+        action="store_true",
+        help=(
+            "Do not create pre-rewrite backup tags for explicit target refs. "
+            "Git filter-branch still keeps the original refs under refs/original/."
+        ),
+    )
+    oneshot.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate and validate the planned rewrite without changing history.",
+    )
+    oneshot.add_argument(
+        "--save-schedule",
+        help="Optional path to write the generated JSON schedule before rewriting.",
+    )
+
+    return parser.parse_args()
+
+
+def run_git(
+    repo: Path,
+    args: list[str],
+    *,
+    capture_output: bool = True,
+    check: bool = True,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=check,
+        capture_output=capture_output,
+        text=True,
+        env=env,
+    )
+
+
+def git_output(repo: Path, *args: str) -> str:
+    return run_git(repo, list(args)).stdout
+
+
+def ensure_repo(repo: Path) -> None:
+    try:
+        git_output(repo, "rev-parse", "--git-dir")
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(f"{repo} is not a git repository.") from exc
+
+
+def parse_hhmm(value: str) -> time:
+    try:
+        parsed = datetime.strptime(value, "%H:%M")
+    except ValueError as exc:
+        raise SystemExit(f"Invalid time value {value!r}; expected HH:MM.") from exc
+    return parsed.time()
+
+
+def parse_reference_now(value: str | None) -> datetime:
+    if value is None:
+        return datetime.now().astimezone().replace(microsecond=0)
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise SystemExit(
+            f"Invalid --reference-now value {value!r}; expected ISO 8601."
+        ) from exc
+
+    if parsed.tzinfo is None:
+        parsed = parsed.astimezone()
+
+    return parsed.replace(microsecond=0)
+
+
+def load_commits(repo: Path) -> list[Commit]:
+    raw = git_output(repo, "log", "--all", "--date=iso-strict", "--pretty=format:%H%x09%aI")
+    commits: list[Commit] = []
+    for line in raw.splitlines():
+        sha, authored_at = line.split("\t", 1)
+        commits.append(Commit(sha=sha, original_at=datetime.fromisoformat(authored_at)))
+
+    commits.sort(key=lambda commit: (commit.original_at, commit.sha))
+    return commits
+
+
+def is_work_hours(dt: datetime, workday_start: time, workday_end: time) -> bool:
+    if dt.weekday() >= 5:
+        return False
+
+    current = dt.timetz().replace(tzinfo=None)
+    return workday_start <= current < workday_end
+
+
+def is_weekend_window(dt: datetime) -> bool:
+    if dt.weekday() < 5:
+        return False
+
+    current = dt.timetz().replace(tzinfo=None)
+    return WEEKEND_VALID_START <= current < WEEKEND_VALID_END
+
+
+def is_weekday_evening_window(dt: datetime, workday_end: time) -> bool:
+    if dt.weekday() >= 5:
+        return False
+
+    current = dt.timetz().replace(tzinfo=None)
+    return workday_end <= current < WEEKDAY_EVENING_END
+
+
+def is_valid_proposed_time(
+    dt: datetime, workday_start: time, workday_end: time
+) -> bool:
+    if dt.weekday() >= 5:
+        return is_weekend_window(dt)
+
+    current = dt.timetz().replace(tzinfo=None)
+    return WEEKDAY_VALID_START <= current < WEEKDAY_EVENING_END
+
+
+def stable_fraction(key: str) -> float:
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64
+
+
+def stable_int(key: str, low: int, high: int) -> int:
+    if low > high:
+        raise ValueError("stable_int requires low <= high")
+    span = high - low + 1
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    return low + (int.from_bytes(digest[:8], "big") % span)
+
+
+def should_skip_weekday_evening(day: datetime) -> bool:
+    base_probability = 0.18
+    if day.weekday() == 4:
+        base_probability = 0.28
+
+    key = f"weekday-skip:{day.date().isoformat()}"
+    return stable_fraction(key) < base_probability
+
+
+def weekend_primary_day(day: datetime) -> int:
+    saturday = day - timedelta(days=day.weekday() - 5)
+    key = f"weekend-primary:{saturday.date().isoformat()}"
+    return 6 if stable_fraction(key) < 0.7 else 5
+
+
+def weekend_window_bounds(day: datetime) -> tuple[time, time]:
+    if day.weekday() not in (5, 6):
+        raise ValueError("weekend_window_bounds requires a Saturday or Sunday")
+
+    primary_day = weekend_primary_day(day)
+    if day.weekday() == primary_day:
+        return WEEKEND_VALID_START, WEEKEND_VALID_END
+    return time(10, 0), time(18, 0)
+
+
+def is_acceptable_unchanged_timestamp(
+    dt: datetime, workday_start: time, workday_end: time
+) -> bool:
+    if dt.weekday() >= 5:
+        return is_weekend_window(dt)
+
+    current = dt.timetz().replace(tzinfo=None)
+    return (
+        WEEKDAY_VALID_START <= current < workday_start
+        or is_weekday_evening_window(dt, workday_end)
+    )
+
+
+def starts_at_window_boundary(dt: datetime, workday_end: time) -> bool:
+    current = dt.timetz().replace(tzinfo=None)
+    if dt.weekday() >= 5:
+        return current in (WEEKEND_VALID_START, time(10, 0))
+    return current in (WEEKDAY_VALID_START, workday_end)
+
+
+def jittered_window_start(day: datetime, window_start: time, jitter_key: str) -> datetime:
+    base = day.replace(
+        hour=window_start.hour,
+        minute=window_start.minute,
+        second=window_start.second,
+        microsecond=0,
+    )
+    jitter_minutes = stable_int(
+        f"window-start:{jitter_key}:{day.date().isoformat()}:{window_start.isoformat()}",
+        WINDOW_START_JITTER_MINUTES[0],
+        WINDOW_START_JITTER_MINUTES[1],
+    )
+    return base + timedelta(minutes=jitter_minutes)
+
+
+def first_valid_slot_at_or_after(
+    minimum_allowed: datetime,
+    workday_start: time,
+    workday_end: time,
+    jitter_key: str,
+) -> datetime:
+    candidate = minimum_allowed.replace(microsecond=0)
+    for day_offset in range(370):
+        day = candidate + timedelta(days=day_offset)
+        if day.weekday() >= 5:
+            window_start = WEEKEND_VALID_START
+            window_end = WEEKEND_VALID_END
+        else:
+            window_start = WEEKDAY_VALID_START
+            window_end = WEEKDAY_EVENING_END
+
+        slot_start = day.replace(
+            hour=window_start.hour,
+            minute=window_start.minute,
+            second=window_start.second,
+            microsecond=0,
+        )
+        slot_end = day.replace(
+            hour=window_end.hour,
+            minute=window_end.minute,
+            second=window_end.second,
+            microsecond=0,
+        )
+
+        if slot_end <= candidate:
+            continue
+
+        if slot_start < candidate:
+            return candidate
+
+        return jittered_window_start(day, window_start, jitter_key)
+
+    return candidate
+
+
+def first_preferred_slot_at_or_after(
+    minimum_allowed: datetime,
+    original_at: datetime,
+    workday_start: time,
+    workday_end: time,
+    jitter_key: str,
+) -> datetime:
+    if (
+        minimum_allowed == original_at
+        and is_acceptable_unchanged_timestamp(original_at, workday_start, workday_end)
+        and not starts_at_window_boundary(original_at, workday_end)
+    ):
+        return minimum_allowed
+
+    candidate = minimum_allowed.replace(microsecond=0)
+    for day_offset in range(370):
+        day = candidate + timedelta(days=day_offset)
+        if day.weekday() >= 5:
+            window_start, window_end = weekend_window_bounds(day)
+        else:
+            if should_skip_weekday_evening(day):
+                continue
+            window_start = workday_end
+            window_end = WEEKDAY_EVENING_END
+
+        slot_start = day.replace(
+            hour=window_start.hour,
+            minute=window_start.minute,
+            second=window_start.second,
+            microsecond=0,
+        )
+        slot_end = day.replace(
+            hour=window_end.hour,
+            minute=window_end.minute,
+            second=window_end.second,
+            microsecond=0,
+        )
+
+        if slot_end <= candidate:
+            continue
+
+        if slot_start < candidate:
+            return candidate
+
+        return jittered_window_start(day, window_start, jitter_key)
+
+    return candidate
+
+
+def minimum_gap_between(previous: Commit, current: Commit) -> timedelta:
+    jitter_minutes = stable_int(
+        f"min-gap:{previous.sha}:{current.sha}",
+        MIN_COMMIT_GAP_JITTER_MINUTES[0],
+        MIN_COMMIT_GAP_JITTER_MINUTES[1],
+    )
+    return timedelta(minutes=MIN_COMMIT_GAP_MINUTES + jitter_minutes)
+
+
+def build_latest_feasible_schedule(
+    commits: list[Commit], reference_now: datetime
+) -> list[datetime]:
+    if not commits:
+        return []
+
+    latest: list[datetime] = [reference_now - timedelta(seconds=1)]
+    for index in range(len(commits) - 2, -1, -1):
+        gap = minimum_gap_between(commits[index], commits[index + 1])
+        latest.insert(0, latest[0] - gap)
+    return latest
+
+
+def classify_status(
+    original_in_work_hours: bool,
+    proposed_in_work_hours: bool,
+    shift_seconds: int,
+) -> str:
+    if shift_seconds == 0 and not original_in_work_hours:
+        return "unchanged_outside_hours"
+    if shift_seconds == 0 and original_in_work_hours:
+        return "retained_in_work_hours"
+    if not proposed_in_work_hours:
+        return "moved_outside_hours"
+    return "moved_but_still_in_work_hours"
+
+
+def simulate_schedule(
+    commits: list[Commit],
+    reference_now: datetime,
+    workday_start: time,
+    workday_end: time,
+) -> list[ProposedCommit]:
+    if not commits:
+        return []
+
+    min_work_hour_commits = min_in_work_hour_commits(len(commits))
+    max_work_hour_commits = max_in_work_hour_commits(len(commits))
+    latest = build_latest_feasible_schedule(commits, reference_now)
+    if latest[0] < commits[0].original_at:
+        raise SystemExit(
+            "No feasible proposal exists: keeping the earliest commit at or after its "
+            "original timestamp would force a later commit to land at or after the "
+            "reference time."
+        )
+
+    forced_work_hour_indices: set[int] = set()
+
+    while True:
+        proposed: list[ProposedCommit] = []
+        work_hour_commits_used = 0
+        rescue_candidates: list[int] = []
+        changed = False
+
+        for index, commit in enumerate(commits):
+            if index == 0:
+                minimum_allowed = commit.original_at
+            else:
+                minimum_allowed = max(
+                    commit.original_at,
+                    proposed[-1].proposed_at
+                    + minimum_gap_between(commits[index - 1], commit),
+                )
+
+            preferred = first_preferred_slot_at_or_after(
+                minimum_allowed=minimum_allowed,
+                original_at=commit.original_at,
+                workday_start=workday_start,
+                workday_end=workday_end,
+                jitter_key=commit.sha,
+            )
+            keep_in_work_hours = (
+                index in forced_work_hour_indices
+                and is_work_hours(minimum_allowed, workday_start, workday_end)
+            )
+            proposed_at = minimum_allowed if keep_in_work_hours else preferred
+            if proposed_at > latest[index]:
+                proposed_at = first_valid_slot_at_or_after(
+                    minimum_allowed=minimum_allowed,
+                    workday_start=workday_start,
+                    workday_end=workday_end,
+                    jitter_key=commit.sha,
+                )
+
+            if proposed_at > latest[index]:
+                if (
+                    is_work_hours(minimum_allowed, workday_start, workday_end)
+                    and index not in forced_work_hour_indices
+                ):
+                    rescue_candidates.append(index)
+
+                if rescue_candidates and work_hour_commits_used < max_work_hour_commits:
+                    forced_work_hour_indices.add(rescue_candidates[-1])
+                    changed = True
+                    break
+
+                raise SystemExit(
+                    f"No feasible proposal exists for commit {commit.sha}: constraints are "
+                    "too tight to keep it inside the valid weekday/weekend time windows "
+                    "without materially exceeding the work-hours target."
+                )
+
+            if (
+                is_work_hours(minimum_allowed, workday_start, workday_end)
+                and not keep_in_work_hours
+            ):
+                rescue_candidates.append(index)
+
+            original_in_work_hours = is_work_hours(
+                commit.original_at, workday_start, workday_end
+            )
+            proposed_in_work_hours = is_work_hours(
+                proposed_at, workday_start, workday_end
+            )
+            if proposed_in_work_hours:
+                work_hour_commits_used += 1
+            shift_seconds = int((proposed_at - commit.original_at).total_seconds())
+            proposed.append(
+                ProposedCommit(
+                    sha=commit.sha,
+                    original_at=commit.original_at,
+                    proposed_at=proposed_at,
+                    original_in_work_hours=original_in_work_hours,
+                    proposed_in_work_hours=proposed_in_work_hours,
+                    shift_seconds=shift_seconds,
+                    status=classify_status(
+                        original_in_work_hours=original_in_work_hours,
+                        proposed_in_work_hours=proposed_in_work_hours,
+                        shift_seconds=shift_seconds,
+                    ),
+                )
+            )
+
+        if changed:
+            continue
+
+        if work_hour_commits_used >= min_work_hour_commits:
+            return proposed
+
+        promotable = [
+            index
+            for index in rescue_candidates
+            if index not in forced_work_hour_indices
+        ]
+        if not promotable or work_hour_commits_used >= max_work_hour_commits:
+            return proposed
+
+        forced_work_hour_indices.add(promotable[-1])
+
+
+def percentage(count: int, total: int) -> float:
+    if total == 0:
+        return 0.0
+    return round((count / total) * 100, 2)
+
+
+def min_in_work_hour_commits(total: int) -> int:
+    return math.ceil(total * MIN_WORK_HOURS_SHARE)
+
+
+def max_in_work_hour_commits(total: int) -> int:
+    return max(min_in_work_hour_commits(total), math.ceil(total * MAX_WORK_HOURS_SHARE))
+
+
+def build_distribution(
+    timestamps: Iterable[datetime], workday_start: time, workday_end: time
+) -> dict[str, object]:
+    weekday_names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    by_hour = {str(hour).zfill(2): 0 for hour in range(24)}
+    by_weekday = {name: 0 for name in weekday_names}
+    within_work_hours = 0
+    total = 0
+
+    for dt in timestamps:
+        total += 1
+        by_hour[str(dt.hour).zfill(2)] += 1
+        by_weekday[weekday_names[dt.weekday()]] += 1
+        if is_work_hours(dt, workday_start, workday_end):
+            within_work_hours += 1
+
+    outside_work_hours = total - within_work_hours
+    return {
+        "total": total,
+        "within_work_hours": within_work_hours,
+        "within_work_hours_pct": percentage(within_work_hours, total),
+        "outside_work_hours": outside_work_hours,
+        "outside_work_hours_pct": percentage(outside_work_hours, total),
+        "by_hour": by_hour,
+        "by_weekday": by_weekday,
+    }
+
+
+def build_json_payload(
+    commits: list[Commit],
+    proposed: list[ProposedCommit],
+    reference_now: datetime,
+    workday_start: time,
+    workday_end: time,
+) -> dict[str, object]:
+    moved = sum(1 for item in proposed if item.shift_seconds > 0)
+    moved_outside = sum(1 for item in proposed if item.status == "moved_outside_hours")
+    retained_in_work_hours = sum(
+        1 for item in proposed if item.status == "retained_in_work_hours"
+    )
+    proposed_within_work_hours = sum(1 for item in proposed if item.proposed_in_work_hours)
+    min_work_hour_target = min_in_work_hour_commits(len(proposed))
+    max_work_hour_target = max_in_work_hour_commits(len(proposed))
+
+    return {
+        "metadata": {
+            "reference_now": reference_now.isoformat(),
+            "workday_start": workday_start.strftime("%H:%M"),
+            "workday_end": workday_end.strftime("%H:%M"),
+            "algorithm": (
+                "Forward scheduling with backward latest-feasible bounds. Each commit "
+                "keeps its original order, never lands earlier than its original "
+                "timestamp, and enforces a deterministic minimum inter-commit gap of "
+                f"{MIN_COMMIT_GAP_MINUTES} minutes plus a 1-4 minute jitter. The "
+                "proposal also adds a deterministic 1-4 minute window-start jitter "
+                "when opening a new slot, avoiding exact boundary times such as "
+                "07:00. It is moved toward preferred after-hours windows: weekday "
+                "evenings first, with occasional skipped evenings and a slight weekend "
+                "bias. Weekend commits are limited to daytime windows, with each "
+                "weekend leaning toward Sunday about 70% of the time when overflow is "
+                "redistributed. The proposal retains a small weekday work-hours slice "
+                "when feasible, "
+                f"targeting between {int(MIN_WORK_HOURS_SHARE * 100)}% and "
+                f"{int(MAX_WORK_HOURS_SHARE * 100)}% of the schedule, while allowing "
+                "slight flex if the hard timing constraints require it."
+            ),
+            "minimum_gap_minutes": MIN_COMMIT_GAP_MINUTES,
+            "minimum_gap_jitter_minutes": {
+                "min": MIN_COMMIT_GAP_JITTER_MINUTES[0],
+                "max": MIN_COMMIT_GAP_JITTER_MINUTES[1],
+            },
+            "window_start_jitter_minutes": {
+                "min": WINDOW_START_JITTER_MINUTES[0],
+                "max": WINDOW_START_JITTER_MINUTES[1],
+            },
+            "min_work_hours_pct": round(MIN_WORK_HOURS_SHARE * 100, 2),
+            "min_work_hour_commits": min_in_work_hour_commits(len(commits)),
+            "max_work_hours_pct": round(MAX_WORK_HOURS_SHARE * 100, 2),
+            "max_work_hour_commits": max_in_work_hour_commits(len(commits)),
+        },
+        "original_distribution": build_distribution(
+            (commit.original_at for commit in commits),
+            workday_start,
+            workday_end,
+        ),
+        "proposed_distribution": build_distribution(
+            (item.proposed_at for item in proposed),
+            workday_start,
+            workday_end,
+        ),
+        "summary": {
+            "moved_commits": moved,
+            "moved_commits_pct": percentage(moved, len(proposed)),
+            "moved_outside_hours": moved_outside,
+            "retained_in_work_hours": retained_in_work_hours,
+            "proposed_in_work_hours": proposed_within_work_hours,
+            "proposed_in_work_hours_pct": percentage(
+                proposed_within_work_hours, len(proposed)
+            ),
+            "min_work_hour_commits": min_work_hour_target,
+            "max_work_hour_commits": max_work_hour_target,
+            "within_target_work_hours_band": (
+                min_work_hour_target
+                <= proposed_within_work_hours
+                <= max_work_hour_target
+            ),
+        },
+        "schedule": [
+            {
+                "sha": item.sha,
+                "original_author_date": item.original_at.isoformat(),
+                "proposed_author_date": item.proposed_at.isoformat(),
+                "shift_seconds": item.shift_seconds,
+                "original_in_work_hours": item.original_in_work_hours,
+                "proposed_in_work_hours": item.proposed_in_work_hours,
+                "status": item.status,
+            }
+            for item in proposed
+        ],
+    }
+
+
+def build_schedule_payload(
+    repo: Path,
+    reference_now: datetime,
+    workday_start: time,
+    workday_end: time,
+) -> tuple[list[Commit], list[ProposedCommit], dict[str, object]]:
+    commits = load_commits(repo)
+    proposed = simulate_schedule(
+        commits=commits,
+        reference_now=reference_now,
+        workday_start=workday_start,
+        workday_end=workday_end,
+    )
+    payload = build_json_payload(
+        commits=commits,
+        proposed=proposed,
+        reference_now=reference_now,
+        workday_start=workday_start,
+        workday_end=workday_end,
+    )
+    return commits, proposed, payload
+
+
+def write_csv(proposed: list[ProposedCommit]) -> None:
+    writer = csv.DictWriter(
+        sys.stdout,
+        fieldnames=[
+            "sha",
+            "original_author_date",
+            "proposed_author_date",
+            "shift_seconds",
+            "original_in_work_hours",
+            "proposed_in_work_hours",
+            "status",
+        ],
+    )
+    writer.writeheader()
+    for item in proposed:
+        writer.writerow(
+            {
+                "sha": item.sha,
+                "original_author_date": item.original_at.isoformat(),
+                "proposed_author_date": item.proposed_at.isoformat(),
+                "shift_seconds": item.shift_seconds,
+                "original_in_work_hours": str(item.original_in_work_hours).lower(),
+                "proposed_in_work_hours": str(item.proposed_in_work_hours).lower(),
+                "status": item.status,
+            }
+        )
+
+
+def parse_iso_datetime(value: str, field_name: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise SystemExit(f"Invalid {field_name} value {value!r}; expected ISO 8601.") from exc
+    if parsed.tzinfo is None:
+        raise SystemExit(f"Invalid {field_name} value {value!r}; timezone offset is required.")
+    return parsed.replace(microsecond=0).isoformat()
+
+
+def load_schedule(path: Path) -> dict[str, ScheduledCommit]:
+    try:
+        payload = json.loads(path.read_text())
+    except FileNotFoundError as exc:
+        raise SystemExit(f"Schedule file not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Schedule file is not valid JSON: {path}") from exc
+
+    return load_schedule_from_payload(payload)
+
+
+def load_schedule_from_payload(payload: dict[str, object]) -> dict[str, ScheduledCommit]:
+    schedule = payload.get("schedule")
+    if not isinstance(schedule, list):
+        raise SystemExit("Schedule payload must contain a top-level 'schedule' array.")
+
+    commits: dict[str, ScheduledCommit] = {}
+    for index, item in enumerate(schedule):
+        if not isinstance(item, dict):
+            raise SystemExit(f"Schedule entry {index} must be an object.")
+
+        sha = item.get("sha")
+        proposed_author_date = item.get("proposed_author_date")
+        if not isinstance(sha, str) or not sha:
+            raise SystemExit(f"Schedule entry {index} is missing a valid 'sha'.")
+        if not isinstance(proposed_author_date, str) or not proposed_author_date:
+            raise SystemExit(
+                f"Schedule entry {index} is missing a valid 'proposed_author_date'."
+            )
+        if sha in commits:
+            raise SystemExit(f"Duplicate schedule entry for commit {sha}.")
+
+        commits[sha] = ScheduledCommit(
+            sha=sha,
+            proposed_author_date=parse_iso_datetime(
+                proposed_author_date, "proposed_author_date"
+            ),
+        )
+
+    if not commits:
+        raise SystemExit("Schedule is empty; nothing to rewrite.")
+
+    return commits
+
+
+def repo_is_dirty(repo: Path) -> bool:
+    status = git_output(repo, "status", "--porcelain")
+    return bool(status.strip())
+
+
+def default_target_ref(repo: Path) -> str:
+    branch = git_output(repo, "branch", "--show-current").strip()
+    return branch or "HEAD"
+
+
+def resolve_target_refs(repo: Path, refs: list[str], all_refs: bool) -> list[str]:
+    if all_refs:
+        return ["--all"]
+    return refs or [default_target_ref(repo)]
+
+
+def collect_target_commits(repo: Path, refs: Iterable[str]) -> list[str]:
+    raw = git_output(repo, "rev-list", "--reverse", *refs)
+    commits = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not commits:
+        raise SystemExit("No commits found for the requested refs.")
+    return commits
+
+
+def validate_schedule_against_repo(
+    repo: Path, schedule: dict[str, ScheduledCommit], target_commits: list[str]
+) -> None:
+    missing = [sha for sha in target_commits if sha not in schedule]
+    if missing:
+        preview = ", ".join(missing[:5])
+        suffix = "" if len(missing) <= 5 else f", ... ({len(missing)} total missing)"
+        raise SystemExit(
+            "Schedule does not cover every commit in the requested rewrite range: "
+            f"{preview}{suffix}"
+        )
+
+    unknown = [
+        sha
+        for sha in schedule
+        if run_git(repo, ["cat-file", "-e", f"{sha}^{{commit}}"], check=False).returncode != 0
+    ]
+    if unknown:
+        preview = ", ".join(unknown[:5])
+        suffix = "" if len(unknown) <= 5 else f", ... ({len(unknown)} total unknown)"
+        raise SystemExit(
+            f"Schedule references commits that do not exist in this repo: {preview}{suffix}"
+        )
+
+
+def build_env_filter_script(schedule: dict[str, ScheduledCommit]) -> str:
+    lines = ["case \"$GIT_COMMIT\" in"]
+    for sha, commit in sorted(schedule.items()):
+        date = shlex.quote(commit.proposed_author_date)
+        lines.extend(
+            [
+                f"  {sha})",
+                f"    export GIT_AUTHOR_DATE={date}",
+                f"    export GIT_COMMITTER_DATE={date}",
+                "    ;;",
+            ]
+        )
+    lines.extend(["esac", ""])
+    return "\n".join(lines)
+
+
+def sanitize_ref_for_tag(ref: str) -> str:
+    return ref.replace("/", "-").replace(":", "-")
+
+
+def make_backup_tags(repo: Path, refs: Iterable[str]) -> list[str]:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    created_tags: list[str] = []
+
+    for ref in refs:
+        if ref.startswith("-"):
+            continue
+        tag_name = f"history-rewrite-backup-{sanitize_ref_for_tag(ref)}-{timestamp}"
+        message = f"Backup before rewriting {ref} using a generated commit schedule"
+        run_git(repo, ["tag", "-a", tag_name, "-m", message, ref], capture_output=True)
+        created_tags.append(tag_name)
+
+    return created_tags
+
+
+def rewrite_history(
+    repo: Path,
+    refs: list[str],
+    env_filter_path: Path,
+) -> None:
+    env = os.environ.copy()
+    env["FILTER_BRANCH_SQUELCH_WARNING"] = "1"
+    command = [
+        "filter-branch",
+        "--env-filter",
+        f". {shlex.quote(str(env_filter_path))}",
+        "--tag-name-filter",
+        "cat",
+        "--",
+        *refs,
+    ]
+    run_git(repo, command, capture_output=False, env=env)
+
+
+def parse_workday_window(args: argparse.Namespace) -> tuple[time, time]:
+    workday_start = parse_hhmm(args.workday_start)
+    workday_end = parse_hhmm(args.workday_end)
+    if workday_start >= workday_end:
+        raise SystemExit("--workday-start must be earlier than --workday-end.")
+    return workday_start, workday_end
+
+
+def write_schedule_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def simulate_main(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    ensure_repo(repo)
+
+    workday_start, workday_end = parse_workday_window(args)
+    reference_now = parse_reference_now(args.reference_now)
+    _commits, proposed, payload = build_schedule_payload(
+        repo=repo,
+        reference_now=reference_now,
+        workday_start=workday_start,
+        workday_end=workday_end,
+    )
+
+    if args.format == "csv":
+        write_csv(proposed)
+        return 0
+
+    json.dump(payload, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def rewrite_main(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    schedule_path = Path(args.schedule).resolve()
+
+    ensure_repo(repo)
+    if repo_is_dirty(repo) and not args.allow_dirty:
+        raise SystemExit(
+            "Repository has uncommitted changes. Commit, stash, or pass --allow-dirty."
+        )
+
+    target_refs = resolve_target_refs(repo, args.refs, args.all_refs)
+    schedule = load_schedule(schedule_path)
+    target_commits = collect_target_commits(repo, target_refs)
+    validate_schedule_against_repo(repo, schedule, target_commits)
+
+    env_filter_script = build_env_filter_script(schedule)
+
+    if args.dry_run:
+        refs_display = " ".join(shlex.quote(ref) for ref in target_refs)
+        sys.stdout.write(
+            f"Validated {len(target_commits)} target commits against {len(schedule)} scheduled entries.\n"
+        )
+        sys.stdout.write(f"Target refs: {refs_display}\n")
+        sys.stdout.write("Planned rewrite command:\n")
+        sys.stdout.write(
+            "git filter-branch --env-filter '. /tmp/<generated-env-filter>' "
+            f"--tag-name-filter cat -- {refs_display}\n"
+        )
+        return 0
+
+    backup_tags: list[str] = []
+    if not args.skip_backup_tag:
+        backup_tags = make_backup_tags(repo, target_refs)
+
+    with tempfile.TemporaryDirectory(prefix="rewrite-git-history-") as temp_dir:
+        env_filter_path = Path(temp_dir) / "env-filter.sh"
+        env_filter_path.write_text(env_filter_script)
+        rewrite_history(repo, target_refs, env_filter_path)
+
+    head_after = git_output(repo, "rev-parse", "--verify", "HEAD").strip()
+    if backup_tags:
+        print(f"Created backup tags: {', '.join(backup_tags)}")
+    print(f"Rewritten HEAD: {head_after}")
+    print("Original refs are also available under refs/original/.")
+    return 0
+
+
+def oneshot_main(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    ensure_repo(repo)
+    if repo_is_dirty(repo) and not args.allow_dirty:
+        raise SystemExit(
+            "Repository has uncommitted changes. Commit, stash, or pass --allow-dirty."
+        )
+
+    workday_start, workday_end = parse_workday_window(args)
+    reference_now = parse_reference_now(args.reference_now)
+    _commits, _proposed, payload = build_schedule_payload(
+        repo=repo,
+        reference_now=reference_now,
+        workday_start=workday_start,
+        workday_end=workday_end,
+    )
+
+    if args.save_schedule:
+        write_schedule_json(Path(args.save_schedule).resolve(), payload)
+
+    schedule = load_schedule_from_payload(payload)
+    target_refs = resolve_target_refs(repo, args.refs, args.all_refs)
+    target_commits = collect_target_commits(repo, target_refs)
+    validate_schedule_against_repo(repo, schedule, target_commits)
+
+    env_filter_script = build_env_filter_script(schedule)
+
+    if args.dry_run:
+        refs_display = " ".join(shlex.quote(ref) for ref in target_refs)
+        sys.stdout.write(
+            f"Simulated {len(payload['schedule'])} commits and validated {len(target_commits)} target commits.\n"
+        )
+        if args.save_schedule:
+            sys.stdout.write(
+                f"Saved generated schedule to {Path(args.save_schedule).resolve()}\n"
+            )
+        sys.stdout.write(f"Target refs: {refs_display}\n")
+        sys.stdout.write("Planned rewrite command:\n")
+        sys.stdout.write(
+            "git filter-branch --env-filter '. /tmp/<generated-env-filter>' "
+            f"--tag-name-filter cat -- {refs_display}\n"
+        )
+        return 0
+
+    backup_tags: list[str] = []
+    if not args.skip_backup_tag:
+        backup_tags = make_backup_tags(repo, target_refs)
+
+    with tempfile.TemporaryDirectory(prefix="rewrite-git-history-") as temp_dir:
+        env_filter_path = Path(temp_dir) / "env-filter.sh"
+        env_filter_path.write_text(env_filter_script)
+        rewrite_history(repo, target_refs, env_filter_path)
+
+    head_after = git_output(repo, "rev-parse", "--verify", "HEAD").strip()
+    if args.save_schedule:
+        print(f"Saved generated schedule: {Path(args.save_schedule).resolve()}")
+    if backup_tags:
+        print(f"Created backup tags: {', '.join(backup_tags)}")
+    print(f"Rewritten HEAD: {head_after}")
+    print("Original refs are also available under refs/original/.")
+    return 0
+
+
+def main() -> int:
+    args = parse_args()
+    if args.command == "simulate":
+        return simulate_main(args)
+    if args.command == "rewrite":
+        return rewrite_main(args)
+    if args.command == "oneshot":
+        return oneshot_main(args)
+    raise SystemExit(f"Unknown command: {args.command}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
