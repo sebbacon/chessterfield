@@ -327,6 +327,15 @@ describe('Play view game loop', () => {
     expect(activeSide?.dataset.side).toBe('black')
   })
 
+  it('shows a load error instead of crashing on an invalid position FEN', async () => {
+    mockPosition('8/8/8/8/8/8/8/8 w - - 0 1')
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    expect(app.textContent).toContain('Position could not be loaded')
+    expect(app.querySelector('#board')).toBeNull()
+  })
+
   it('keeps move history aligned in white and black columns when black moves first', async () => {
     mockPosition('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1')
 
@@ -359,7 +368,7 @@ describe('Play view game loop', () => {
     expect(cgMock.destroy).toHaveBeenCalled()
   })
 
-  it('shows next position in the result modal after checkmate and navigates to it', async () => {
+  it('shows a dismissible board overlay after checkmate and navigates from the top bar', async () => {
     vi.stubGlobal('fetch', vi.fn(() =>
       Promise.resolve({
         ok: true,
@@ -381,9 +390,14 @@ describe('Play view game loop', () => {
 
     expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
     expect(app.querySelector('#result-text')?.textContent).toContain('Checkmate')
-    expect(app.querySelector('#result-next-position-btn')?.hidden).toBe(false)
+    expect(app.querySelector('#board')).not.toBeNull()
 
-    app.querySelector('#result-next-position-btn').click()
+    app.querySelector('#dismiss-result-btn').click()
+    expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(true)
+
+    app.querySelector('#restart-btn').click()
+    capturedCgConfig.movable.events.after('f7', 'g7')
+    app.querySelector('#next-position-btn').click()
     expect(navigate).toHaveBeenCalledWith('play', 2, {
       play: { ply: 0, side: null },
     })

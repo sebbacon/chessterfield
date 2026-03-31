@@ -80,8 +80,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       initialHistory = [{ fen: data.fen, lastMove: null, moveSan: null }]
       initialUserColor = initialUserColor || fenSideToColor(data.fen)
     }
+    validatePlayablePosition(position, initialHistory)
   } catch {
-    app.innerHTML = `<p class="muted" style="padding:2rem">${isGame ? 'Game' : 'Position'} not found. <button id="back" class="btn-secondary">Back</button></p>`
+    app.innerHTML = `<p class="muted" style="padding:2rem">${isGame ? 'Game' : 'Position'} could not be loaded. <button id="back" class="btn-secondary">Back</button></p>`
     app.querySelector('#back').addEventListener('click', () => navigate('library'))
     return
   }
@@ -114,6 +115,15 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
         </div>
         <div id="board-wrap">
           <div id="board"></div>
+          <div class="result-overlay hidden" id="result-overlay" aria-live="polite">
+            <div class="result-card">
+              <div class="result-copy">
+                <p class="result-eyebrow">Game over</p>
+                <h2 id="result-text"></h2>
+              </div>
+              <button id="dismiss-result-btn" class="btn-secondary">Dismiss</button>
+            </div>
+          </div>
           <div id="board-analysis-indicator" class="board-analysis-indicator" hidden aria-live="polite">
             <span class="analysis-spinner" aria-hidden="true"></span>
           </div>
@@ -156,14 +166,6 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       </aside>
     </div>
 
-    <div class="result-overlay hidden" id="result-overlay">
-      <div class="result-card">
-        <h2 id="result-text"></h2>
-        <button id="result-next-position-btn" class="btn-secondary" ${(browseOnly || !canAdvanceToNextPosition) ? 'hidden' : ''}>${nextActionLabel}</button>
-        <button id="play-again-btn" class="btn-primary" ${browseOnly ? 'hidden' : ''}>Play Again</button>
-        <button id="back-to-library-btn" class="btn-secondary">Back to Library</button>
-      </div>
-    </div>
   `
 
   // --- State ---
@@ -509,11 +511,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     pendingEngineGo = false
     currentSearch = null
     sendToEngine('stop')
-    const overlay = app.querySelector('#result-overlay')
-    const nextButton = app.querySelector('#result-next-position-btn')
     app.querySelector('#result-text').textContent = text
-    if (nextButton) nextButton.hidden = !(canAdvanceToNextPosition && text.startsWith('Checkmate'))
-    overlay.classList.remove('hidden')
+    app.querySelector('#result-overlay').classList.remove('hidden')
+  }
+
+  function hideResult() {
+    app.querySelector('#result-overlay').classList.add('hidden')
   }
 
   // --- Chessground helpers ---
@@ -546,7 +549,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!atLatest()) {
       positionHistory = positionHistory.slice(0, viewIndex + 1)
       gameOver = false
-      app.querySelector('#result-overlay').classList.add('hidden')
+      hideResult()
     }
 
     const move = chess.move({ from: orig, to: dest, promotion })
@@ -713,14 +716,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   app.querySelector('#back-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
   app.querySelector('#next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
-  app.querySelector('#result-next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
 
-  // --- Result overlay buttons ---
-  app.querySelector('#play-again-btn').addEventListener('click', () => {
-    app.querySelector('#result-overlay').classList.add('hidden')
-    startGame({ replaceUrl: true })
-  })
-  app.querySelector('#back-to-library-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
+  // --- Result panel buttons ---
+  app.querySelector('#dismiss-result-btn').addEventListener('click', hideResult)
 
   // --- Start / restart game ---
   function startGame({ replaceUrl = true } = {}) {
@@ -734,6 +732,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     viewIndex = browseOnly
       ? clampPly(initialPlayState.ply, positionHistory.length - 1, positionHistory.length - 1)
       : 0
+    hideResult()
     chess = new Chess(positionHistory[viewIndex].fen)
     updateMoveHistory()
     updateNavButtons()
@@ -995,6 +994,18 @@ function normalizePlaySide(side) {
 function normalizeTagFilters(tags) {
   if (!Array.isArray(tags)) return []
   return [...new Set(tags.map(tag => String(tag).trim()).filter(Boolean))]
+}
+
+function validatePlayablePosition(position, history) {
+  validateFen(position?.fen)
+  if (!Array.isArray(history) || history.length === 0) {
+    throw new Error('Missing position history')
+  }
+  history.forEach(step => validateFen(step?.fen))
+}
+
+function validateFen(fen) {
+  new Chess(fen)
 }
 
 function buildPositionResourceUrl(positionId, tagFilters) {

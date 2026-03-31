@@ -1,4 +1,5 @@
 import json
+import chess
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_http_methods
@@ -75,14 +76,25 @@ def _filter_positions_by_tags(queryset, tag_filters):
     return queryset.distinct()
 
 
+def _has_valid_fen(fen):
+    try:
+        board = chess.Board(fen)
+    except ValueError:
+        return False
+    return board.is_valid()
+
+
 def _next_position(position, tag_filters=None):
     queryset = Position.objects.all()
     if tag_filters:
         queryset = _filter_positions_by_tags(queryset, tag_filters)
-    return queryset.filter(
+    for candidate in queryset.filter(
         Q(created_at__gt=position.created_at)
         | Q(created_at=position.created_at, id__gt=position.id)
-    ).order_by('created_at', 'id').first()
+    ).order_by('created_at', 'id'):
+        if _has_valid_fen(candidate.fen):
+            return candidate
+    return None
 
 
 PAGE_SIZE = 48

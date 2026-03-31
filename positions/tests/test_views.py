@@ -198,6 +198,30 @@ def test_get_position_scopes_next_position_id_to_active_tag_filters(client):
 
 
 @pytest.mark.django_db
+def test_get_position_skips_invalid_fen_when_computing_next_position_id(client):
+    import time
+    first = Position.objects.create(
+        name='First',
+        fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+    )
+    time.sleep(0.01)
+    Position.objects.create(
+        name='Broken',
+        fen='8/8/8/8/8/8/8/8 w - - 0 1',
+    )
+    time.sleep(0.01)
+    third = Position.objects.create(
+        name='Third',
+        fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    )
+
+    r = client.get(f'/api/positions/{first.id}/')
+    data = json.loads(r.content)
+
+    assert data['next_position_id'] == third.id
+
+
+@pytest.mark.django_db
 def test_get_position_not_found(client):
     r = client.get('/api/positions/9999/')
     assert r.status_code == 404
