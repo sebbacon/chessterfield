@@ -1,8 +1,11 @@
+import { fetchGames, fetchPositions, fetchTags } from '../api/content.js'
+import { ensureSession } from '../state/session.js'
 import { fenToMiniBoard } from '../chess/miniboard.js'
 import { buildUrlFromState } from '../router.js'
-import { getViewedPositionIds } from '../viewed-positions.js'
+import { getViewedPositionIds, isViewedPositionRecord } from '../viewed-positions.js'
 
 export async function mountLibrary(app, navigate, initialState = {}, syncState = () => {}) {
+  const session = await ensureSession()
   app.innerHTML = `
     <div class="library-layout">
       <div class="library-sidebar-backdrop" id="library-sidebar-backdrop" hidden></div>
@@ -41,7 +44,10 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
             </button>
             <h1 id="library-title">Positions</h1>
           </div>
-          <button id="go-import" class="btn-primary">+ Import Position</button>
+          <div class="library-header-actions">
+            <div class="account-pill" id="library-account">${accountLabel(session)}</div>
+            <button id="go-import" class="btn-primary">+ Import Position</button>
+          </div>
         </div>
         <div id="library-grid">Loading...</div>
       </main>
@@ -88,9 +94,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
 
   async function loadTags() {
     try {
-      const r = await fetch('/api/tags/')
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      allTags = await r.json()
+      allTags = await fetchTags()
       renderTags()
     } catch {
       showToast('Failed to load tags')
@@ -201,11 +205,16 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     const grid = app.querySelector('#library-grid')
     if (replace) grid.innerHTML = '<p>Loading...</p>'
     try {
-      const data = viewedFilter === 'all'
-        ? await fetchPositionPage([...selectedTags], pages.positions.current)
+      const useServerProgress = session.authenticated
+      const data = useServerProgress || viewedFilter === 'all'
+        ? await fetchPositions({
+            tags: [...selectedTags],
+            page: pages.positions.current,
+            progress: useServerProgress ? viewedFilterToProgress(viewedFilter) : 'all',
+          })
         : await fetchAllPositionPages([...selectedTags])
       if (seq !== requestSeq || requestedMode !== mode) return
-      if (viewedFilter === 'all') {
+      if (useServerProgress || viewedFilter === 'all') {
         pages.positions.total = data.total_pages
         if (replace) renderPositions(data.results)
         else appendCards(data.results, positionCardHtml)
@@ -227,9 +236,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     const grid = app.querySelector('#library-grid')
     if (replace) grid.innerHTML = '<p>Loading...</p>'
     try {
-      const r = await fetch(`/api/games/?page=${pages.games.current}`)
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const data = await r.json()
+      const data = await fetchGames({ page: pages.games.current })
       if (seq !== requestSeq || requestedMode !== mode) return
       pages.games.total = data.total_pages
       if (replace) renderGames(data.results)
@@ -240,7 +247,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   }
 
   function positionCardHtml(p) {
-    const viewed = viewedPositionIds.has(String(p.id))
+    const viewed = session.authenticated ? isViewedPositionRecord(p) : viewedPositionIds.has(String(p.id))
     const href = buildUrlFromState({
       view: 'play',
       itemId: p.id,
@@ -342,7 +349,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   }
 
   function loadMoreHtml() {
-    if (mode === 'positions' && viewedFilter !== 'all') return ''
+    if (mode === 'positions' && viewedFilter !== 'all' && !session.authenticated) return ''
     if (pages[mode].current >= pages[mode].total) return ''
     return '<div class="load-more-row"><button id="load-more-btn" class="btn-secondary">Load more</button></div>'
   }
@@ -361,7 +368,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     syncState({
       library: {
         mode,
-        page: mode === 'positions' && viewedFilter !== 'all' ? 1 : pages[mode].current,
+        page: mode === 'positions' && viewedFilter !== 'all' && !session.authenticated ? 1 : pages[mode].current,
         tags: [...selectedTags].sort(),
         viewed: viewedFilter,
       },
@@ -385,10 +392,7 @@ function normalizeViewedFilter(value) {
 }
 
 async function fetchPositionPage(tags, page) {
-  const params = buildPositionParams(tags, page)
-  const r = await fetch('/api/positions/?' + params.toString())
-  if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  return r.json()
+  return fetchPositions({ tags, page })
 }
 
 async function fetchAllPositionPages(tags) {
@@ -417,6 +421,12 @@ function buildPositionParams(tags, page) {
 function matchesViewedFilter(positionId, viewedFilter, viewedIds) {
   const viewed = viewedIds.has(String(positionId))
   return viewedFilter === 'viewed' ? viewed : !viewed
+}
+
+function viewedFilterToProgress(viewedFilter) {
+  if (viewedFilter === 'viewed') return 'viewed'
+  if (viewedFilter === 'unviewed') return 'unviewed'
+  return 'all'
 }
 
 function emptyPositionsMessage(viewedFilter) {
@@ -453,6 +463,13 @@ function showToast(msg) {
   t.textContent = msg
   document.body.appendChild(t)
   setTimeout(() => t.remove(), 4000)
+}
+
+function accountLabel(session) {
+  if (session.authenticated) {
+    return `${escapeHtml(session.user.display_name)} <a href="/accounts/logout/">Sign out</a>`
+  }
+  return '<a href="/accounts/login/">Sign in</a> <a href="/accounts/signup/">Create account</a>'
 }
 
 function getMobileQuery() {

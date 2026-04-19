@@ -1,7 +1,11 @@
 import { Chess } from 'chess.js'
 import { Chessground } from 'chessground'
+import { fetchGame, fetchPosition } from '../api/content.js'
+import { createPracticeAttempt, finishPracticeAttempt } from '../api/practice.js'
+import { updateMySettings } from '../api/user.js'
 import { parseStockfishLine } from '../chess/eval.js'
 import { markPositionViewed } from '../viewed-positions.js'
+import { ensureSession } from '../state/session.js'
 import EngineWorker from '../chess/worker.js?worker'
 
 // Import Chessground CSS (Vite handles this)
@@ -56,6 +60,7 @@ async function createEngineWorker() {
 }
 
 export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}, libraryState = {}) {
+  const session = await ensureSession()
   // --- Fetch position or game-end data ---
   let position
   const isGame = typeof itemId === 'string' && itemId.startsWith('game:')
@@ -64,13 +69,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     : []
   let browseOnly = isGame
   let initialHistory = null
-  let initialUserColor = normalizePlaySide(initialPlayState.side)
+  let initialUserColor = normalizePlaySide(initialPlayState.side) || preferredSideFromSession(session)
   const resourceId = isGame ? itemId.slice(5) : itemId
-  const resourceUrl = isGame ? `/api/games/${resourceId}/` : buildPositionResourceUrl(resourceId, activeTagFilters)
   try {
-    const r = await fetch(resourceUrl)
-    if (!r.ok) throw new Error('Not found')
-    const data = await r.json()
+    const data = isGame
+      ? await fetchGame(resourceId)
+      : await fetchPosition(resourceId, { tags: activeTagFilters })
     if (isGame) {
       position = gameToPlayablePosition(data)
       initialHistory = gameToPositionHistory(data)
@@ -87,7 +91,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     return
   }
 
-  const viewedStatus = !isGame ? markPositionViewed(position.id) : null
+  const viewedStatus = !isGame ? await markPositionViewed(position.id) : null
   const nextPositionId = !isGame ? position.next_position_id : null
   const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || activeTagFilters.length > 0)
   const nextActionLabel = nextPositionId ? 'Next Position →' : 'Back to Library →'
@@ -102,6 +106,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
             ${canAdvanceToNextPosition ? `<button id="next-position-btn" class="btn-secondary">${nextActionLabel}</button>` : ''}
           </div>
           <div class="play-topbar-actions">
+            <div class="account-pill">${accountLabel(session)}</div>
             ${viewedStatus ? `
               <span class="viewed-pill" aria-label="Seen on this device">
                 <span class="viewed-pill-icon" aria-hidden="true">✓</span>
@@ -180,9 +185,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let pendingEngineGo = false
   let currentSearch = null
   let analysisByPly = new Map()
-  let analysisHidden = readAnalysisVisibilityPreference()
+  let analysisHidden = readAnalysisVisibilityPreference(session)
   let positionHistory = initialHistory
   let viewIndex = positionHistory.length - 1  // which position in positionHistory is displayed
+  let currentAttemptId = null
+  let attemptClosed = false
 
   // --- Worker setup ---
   try {
@@ -511,6 +518,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     pendingEngineGo = false
     currentSearch = null
     sendToEngine('stop')
+    closeActiveAttempt(resultCodeForText(text))
     app.querySelector('#result-text').textContent = text
     app.querySelector('#result-overlay').classList.remove('hidden')
   }
@@ -676,7 +684,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   })
   app.querySelector('#toggle-analysis-visibility').addEventListener('click', () => {
     analysisHidden = !analysisHidden
-    writeAnalysisVisibilityPreference(analysisHidden)
+    writeAnalysisVisibilityPreference(analysisHidden, session)
     renderAnalysisForPly(viewIndex)
   })
   app.querySelector('#analysis-lines').addEventListener('click', e => {
@@ -695,6 +703,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   })
 
   function goToNextPositionOrLibrary() {
+    closeActiveAttempt('completed')
     teardownWorker()
     if (nextPositionId) {
       navigate('play', nextPositionId, {
@@ -714,7 +723,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!browseOnly) startGame({ replaceUrl: true })
   })
 
-  app.querySelector('#back-btn').addEventListener('click', () => { teardownWorker(); navigate('library') })
+  app.querySelector('#back-btn').addEventListener('click', () => { closeActiveAttempt('abandoned'); teardownWorker(); navigate('library') })
   app.querySelector('#next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
 
   // --- Result panel buttons ---
@@ -722,6 +731,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   // --- Start / restart game ---
   function startGame({ replaceUrl = true } = {}) {
+    if (currentAttemptId && !attemptClosed) {
+      closeActiveAttempt('abandoned')
+    }
     gameOver = false
     engineMoving = false
     hintMode = false
@@ -750,6 +762,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     }
 
     syncPlayState(replaceUrl)
+    beginPracticeAttempt()
 
     sendToEngine('stop')
     sendToEngine('ucinewgame')
@@ -764,6 +777,35 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     } else if (workerReady) {
       requestDisplayedAnalysis({ force: true })
     }
+  }
+
+  function beginPracticeAttempt() {
+    if (browseOnly || !session.authenticated) return
+    attemptClosed = false
+    createPracticeAttempt({
+      position_id: position.id,
+      mode: 'classic',
+      metadata: {
+        start_fen: position.fen,
+      },
+    }).then(payload => {
+      currentAttemptId = payload.id
+    }).catch(() => {
+      currentAttemptId = null
+    })
+  }
+
+  function closeActiveAttempt(result) {
+    if (!session.authenticated || !currentAttemptId || attemptClosed) return
+    attemptClosed = true
+    void finishPracticeAttempt(currentAttemptId, {
+      result,
+      score_delta: scoreDeltaForResult(result),
+      metadata: {
+        final_fen: chess.fen(),
+        ply: viewIndex,
+      },
+    })
   }
 
   function createMoveToken(text, ply) {
@@ -944,7 +986,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 
@@ -1035,16 +1077,58 @@ function keepHistorySelectionVisible(container, currentMoveEl) {
   }
 }
 
-function readAnalysisVisibilityPreference() {
+function readAnalysisVisibilityPreference(session) {
+  if (session.authenticated) {
+    return session.user.settings.analysis_visibility === 'hidden'
+  }
   if (!hasLocalStorage()) return false
   return window.localStorage.getItem(ANALYSIS_VISIBILITY_STORAGE_KEY) === 'hidden'
 }
 
-function writeAnalysisVisibilityPreference(hidden) {
+function writeAnalysisVisibilityPreference(hidden, session) {
+  if (session.authenticated) {
+    session.user.settings.analysis_visibility = hidden ? 'hidden' : 'visible'
+    void updateMySettings({ analysis_visibility: session.user.settings.analysis_visibility })
+    return
+  }
   if (!hasLocalStorage()) return
   window.localStorage.setItem(ANALYSIS_VISIBILITY_STORAGE_KEY, hidden ? 'hidden' : 'shown')
 }
 
 function hasLocalStorage() {
   return typeof window !== 'undefined' && window.localStorage
+}
+
+function preferredSideFromSession(session) {
+  if (!session.authenticated) return null
+  const preferred = session.user.settings.preferred_side
+  return preferred === 'white' || preferred === 'black' ? preferred : null
+}
+
+function accountLabel(session) {
+  if (session.authenticated) {
+    return `${escapeHtml(session.user.display_name)} <a href="/accounts/logout/">Sign out</a>`
+  }
+  return '<a href="/accounts/login/">Sign in</a>'
+}
+
+function scoreDeltaForResult(result) {
+  switch (result) {
+    case 'won':
+      return 10
+    case 'completed':
+      return 5
+    case 'draw':
+      return 2
+    default:
+      return 0
+  }
+}
+
+function resultCodeForText(text) {
+  if (text.includes('You win')) return 'won'
+  if (text.includes('Draw')) return 'draw'
+  if (text.includes('You resigned')) return 'abandoned'
+  if (text.includes('Engine wins')) return 'lost'
+  return 'completed'
 }

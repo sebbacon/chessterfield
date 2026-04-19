@@ -1,4 +1,5 @@
 import './style.css'
+import { ensureSession } from './state/session.js'
 import { buildUrlFromState, DEFAULT_STATE, mergeState, parseUrlState } from './router.js'
 import { mountLibrary } from './views/library.js'
 import { mountImport } from './views/import.js'
@@ -58,4 +59,5 @@ window.addEventListener('popstate', () => {
 })
 
 window.history.replaceState(null, '', buildUrlFromState(state))
+ensureSession().catch(() => {})
 renderView()

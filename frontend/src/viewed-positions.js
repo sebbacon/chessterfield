@@ -1,3 +1,6 @@
+import { updatePositionProgress } from './api/progress.js'
+import { getCachedSession } from './state/session.js'
+
 const STORAGE_KEY = 'chessterfield:viewed-positions:v1'
 
 export function getViewedPositionIds() {
@@ -8,7 +11,23 @@ export function isPositionViewed(positionId) {
   return Object.prototype.hasOwnProperty.call(readViewedPositions(), String(positionId))
 }
 
-export function markPositionViewed(positionId) {
+export function isViewedPositionRecord(position) {
+  if (position?.user_state) {
+    return Boolean(position.user_state.viewed_at)
+  }
+  return isPositionViewed(position?.id)
+}
+
+export async function markPositionViewed(positionId) {
+  const session = getCachedSession()
+  if (session.authenticated) {
+    try {
+      return await updatePositionProgress(positionId, { viewed: true })
+    } catch {
+      // fall back to local marker below if the authenticated call fails
+    }
+  }
+
   const key = String(positionId)
   const viewedPositions = readViewedPositions()
   const alreadyViewed = Object.prototype.hasOwnProperty.call(viewedPositions, key)

@@ -1,16 +1,12 @@
-import hashlib
 import json
 import os
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from positions.models import Position, Tag
+from positions.puzzle_imports import SUPPORTED_IMAGE_SUFFIXES, import_positions_from_manifest, path_source_digest
 from vision.cells import extract_cells, write_result
 from vision.fenify import FenifyPredictor
-
-
-SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 
 
 class Command(BaseCommand):
@@ -69,16 +65,19 @@ class Command(BaseCommand):
                 progress_callback=self.stderr.write,
             )
             manifest = json.loads((page_dir / "manifest.json").read_text())
-            page_created, page_skipped, page_failed = self._import_page(
-                image_path=image_path,
+            page_summary = import_positions_from_manifest(
+                image_label=image_path.name,
+                page_digest=path_source_digest(image_path),
                 manifest=manifest,
                 stage=stage,
+                theme_title=manifest.get("title_en"),
+                set_name=manifest.get("set_name"),
             )
-            created += page_created
-            skipped += page_skipped
-            failed += page_failed
+            created += page_summary.created
+            skipped += page_summary.skipped
+            failed += page_summary.failed
             self.stdout.write(
-                f"{image_path.name}: {page_created} created, {page_skipped} skipped, {page_failed} failed"
+                f"{image_path.name}: {page_summary.created} created, {page_summary.skipped} skipped, {page_summary.failed} failed"
             )
 
         self.stdout.write(
@@ -94,85 +93,3 @@ class Command(BaseCommand):
             if raw.isdigit():
                 return int(raw)
             self.stderr.write("Please enter a whole-number stage.")
-
-    def _import_page(self, image_path: Path, manifest: dict, stage: int) -> tuple[int, int, int]:
-        tactic = manifest.get("title_en")
-        set_name = manifest.get("set_name")
-
-        tag_names = [f"stage:{stage}"]
-        if tactic:
-            tag_names.append(f"tactic:{tactic}")
-        if set_name:
-            tag_names.append(f"set:{set_name}")
-        tags = [Tag.objects.get_or_create(name=name)[0] for name in tag_names]
-
-        created = skipped = failed = 0
-        for index, cell in enumerate(manifest.get("cells", []), start=1):
-            fen = (cell.get("fen") or "").strip()
-            if not fen:
-                failed += 1
-                self.stderr.write(
-                    f"skip {image_path.name} cell {index:02d}: missing fen"
-                    + (f" ({cell.get('fen_error')})" if cell.get("fen_error") else "")
-                )
-                continue
-
-            source = self._position_source(image_path, index)
-            if Position.objects.filter(source=source).exists():
-                skipped += 1
-                continue
-
-            position = Position.objects.create(
-                name=self._position_name(image_path, index, tactic, set_name),
-                fen=fen,
-                notes=self._position_notes(image_path, index, cell, tactic, set_name, stage),
-                source=source,
-            )
-            position.tags.add(*tags)
-            created += 1
-
-        return created, skipped, failed
-
-    def _position_source(self, image_path: Path, index: int) -> str:
-        digest = hashlib.sha1(str(image_path.resolve()).encode("utf-8")).hexdigest()[:12]
-        return f"puzzle-page:{digest}:{index:02d}"
-
-    def _position_name(
-        self,
-        image_path: Path,
-        index: int,
-        tactic: str | None,
-        set_name: str | None,
-    ) -> str:
-        parts = []
-        if tactic:
-            parts.append(tactic)
-        if set_name:
-            parts.append(f"set {set_name}")
-        if not parts:
-            parts.append(image_path.stem)
-        parts.append(f"#{index:02d}")
-        return " ".join(parts)
-
-    def _position_notes(
-        self,
-        image_path: Path,
-        index: int,
-        cell: dict,
-        tactic: str | None,
-        set_name: str | None,
-        stage: int,
-    ) -> str:
-        lines = [
-            f"Imported from {image_path.name}",
-            f"Stage: {stage}",
-            f"Cell: {index:02d}",
-        ]
-        if tactic:
-            lines.append(f"Tactic: {tactic}")
-        if set_name:
-            lines.append(f"Set: {set_name}")
-        crop_path = cell.get("crop_path")
-        if crop_path:
-            lines.append(f"Crop: {crop_path}")
-        return "\n".join(lines)

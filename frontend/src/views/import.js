@@ -1,12 +1,17 @@
 import { Chess } from 'chess.js'
 
+import { createPosition, fetchTags } from '../api/content.js'
+import { ensureSession } from '../state/session.js'
+
 export async function mountImport(app, navigate) {
+  const session = await ensureSession()
   app.innerHTML = `
     <div class="import-layout">
       <div class="import-card">
         <div class="import-header">
           <button id="go-back" class="btn-secondary">← Library</button>
           <h1>Import Position</h1>
+          <div class="account-pill">${accountLabel(session)}</div>
         </div>
         <form id="import-form">
           <label>
@@ -46,8 +51,7 @@ export async function mountImport(app, navigate) {
   let selectedTags = new Set()
 
   try {
-    const r = await fetch('/api/tags/')
-    existingTags = (await r.json()).map(t => t.name)
+    existingTags = (await fetchTags()).map(t => t.name)
   } catch {
     // tag suggestions won't work, that's fine
   }
@@ -125,17 +129,12 @@ export async function mountImport(app, navigate) {
     if (!valid) return
 
     try {
-      const r = await fetch('/api/positions/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
-        body: JSON.stringify({
-          name,
-          fen,
-          notes: app.querySelector('#notes-input').value,
-          tags: [...selectedTags],
-        }),
+      await createPosition({
+        name,
+        fen,
+        notes: app.querySelector('#notes-input').value,
+        tags: [...selectedTags],
       })
-      if (!r.ok) throw new Error('Save failed')
       navigate('library')
     } catch {
       showToast('Failed to save position')
@@ -143,12 +142,14 @@ export async function mountImport(app, navigate) {
   })
 }
 
-function getCsrfToken() {
-  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] ?? ''
+function accountLabel(session) {
+  return session.authenticated
+    ? `Signed in as ${escapeHtml(session.user.display_name)}`
+    : '<a href="/accounts/login/">Sign in</a>'
 }
 
 function escapeHtml(str) {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function showToast(msg) {

@@ -101,6 +101,7 @@ class RecentImportFilter(admin.SimpleListFilter):
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     form = PositionAdminForm
+    change_list_template = "admin/positions/position/change_list.html"
     fields = ("name", "tag_names", "fen", "notes", "source", "created_at")
     list_display = ("created_at", "name", "source_kind", "tag_list", "source")
     list_display_links = ("created_at",)

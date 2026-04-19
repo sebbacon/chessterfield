@@ -1,0 +1,37 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    .puzzle-import-shell {
+      max-width: 56rem;
+    }
+    .puzzle-import-panel {
+      background: #fff;
+      border: 1px solid #d8dde6;
+      border-radius: 10px;
+      padding: 1.5rem;
+      margin-top: 1rem;
+    }
+    .puzzle-import-help {
+      color: #44546a;
+      margin: 0.5rem 0 1rem;
+    }
+  </style>
+{% endblock %}
+
+{% block content %}
+  <div class="puzzle-import-shell">
+    <h1>Upload puzzle page screenshots</h1>
+    <p class="puzzle-import-help">Upload up to 5 page images. Processing runs after upload, then you can review stage, theme, and set before importing positions.</p>
+    <div class="puzzle-import-panel">
+      <form method="post" enctype="multipart/form-data">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <div class="submit-row">
+          <input type="submit" value="Upload and process" class="default">
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

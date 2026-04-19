@@ -7,7 +7,11 @@
 
 ## Overview
 
-A Django-based local chess practice app. Users import positions in FEN format, tag and save them to a library, then play from those positions against Stockfish with a real-time evaluation bar.
+Chessterfield is now a Django + Vite chess practice app with three durable data layers:
+
+- reusable chess content (`Position`, `Game`, `Tag`, puzzle imports, Lichess imports)
+- authenticated user state (profile and per-user settings)
+- authenticated practice progress (viewed/completed/mastery state and scored attempts)
 
 ---
 
@@ -15,59 +19,75 @@ A Django-based local chess practice app. Users import positions in FEN format, t
 
 **Option chosen:** Django API + Vite JS frontend (Option B)
 
-- Django serves a thin JSON API and renders a single HTML shell page
-- All chess logic lives in the browser: Chessground (board), chess.js (move validation), stockfish-web WASM (engine)
-- Vite bundles the frontend into Django's static files — works fully offline after `npm run build` + `python manage.py runserver`
-- No websockets, no React, no DRF
+- Django still serves a thin JSON API and one SPA shell page
+- Browser-side chess logic remains in the frontend: Chessground, chess.js, and Stockfish worker
+- API views are now backed by small query/service modules instead of embedding all filter and serialization logic in view functions
+- User-specific state is no longer modeled as content fields; it lives in dedicated `users` and `progress` apps
+- Vite bundles the frontend into Django static files; no React, no websockets, no DRF
 
 ---
 
 ## Django Side
 
-### App: `positions`
+### Apps
 
-### Models
+- `positions`
+  - content models: `Tag`, `Position`, `Game`
+  - import workflow models: `PuzzleImportBatch`, `PuzzleImportPage`
+  - JSON API for content browsing and detail
+- `users`
+  - `UserProfile`
+  - `UserSettings`
+  - `/api/me/` and `/api/me/settings/`
+  - signup/login/logout integration via Django auth views
+- `progress`
+  - `UserPositionState`
+  - `PracticeAttempt`
+  - `/api/progress/positions/<id>/`
+- `practice`
+  - learning-mode registry and attempt lifecycle endpoints
+  - `/api/practice/modes/`
+  - `/api/practice/attempts/`
 
-```
-Position
-  id          AutoField (PK)
-  name        CharField(max_length=100)
-  fen         TextField()
-  notes       TextField(blank=True)
-  created_at  DateTimeField(auto_now_add=True)
-  tags        ManyToManyField(Tag, blank=True)
+### Key model boundaries
 
-Tag
-  id          AutoField (PK)
-  name        CharField(max_length=50, unique=True)
-```
-
-FEN stored as-is (TextField — FEN strings can exceed 100 chars with move counters). Tags are shared/reusable across positions (e.g. "sicilian" appears once, linked to many positions).
+- `Position` remains reusable chess content: FEN, notes, tags, import provenance
+- `Game` remains imported source content: summary plus reconstructed replay history
+- `UserPositionState` holds per-user viewed/progress/score summary for a position
+- `PracticeAttempt` records individual scored runs without mutating content rows
 
 ### API Endpoints
 
-All return/accept JSON. No authentication (local-only app).
+All content endpoints still return JSON. Authenticated endpoints now use Django session auth + CSRF.
 
 | Method | URL | Description |
 |--------|-----|-------------|
-| GET | `/api/positions/` | List positions, optional `?tag=<name>` (repeatable, OR logic) |
+| GET | `/api/positions/` | List positions with canonical filters (`tag`, `tags`, `progress`, `sort`, `source_kind`) |
 | POST | `/api/positions/` | Create position (name, fen, notes, tags[]) |
-| GET | `/api/positions/<id>/` | Retrieve single position |
+| GET | `/api/positions/<id>/` | Retrieve single position plus active-filter `next_position_id` |
 | PATCH | `/api/positions/<id>/` | Update name, notes, or tags (tags[] replaces full set) |
 | DELETE | `/api/positions/<id>/` | Delete position |
+| GET | `/api/games/` | List imported games |
+| GET | `/api/games/<id>/` | Game detail plus reconstructed history |
 | GET | `/api/tags/` | List all tags (used by Import picker on mount) |
+| GET | `/api/me/` | Current auth/session bootstrap and available practice modes |
+| PATCH | `/api/me/settings/` | Update persisted user settings |
+| PATCH | `/api/progress/positions/<id>/` | Mark viewed/update user position state |
+| GET | `/api/practice/modes/` | List supported learning modes |
+| POST | `/api/practice/attempts/` | Start a practice attempt |
+| PATCH | `/api/practice/attempts/<id>/` | Finish a practice attempt |
 
 Tags are created implicitly: when a position is POSTed or PATCHed with tag names, the backend uses `get_or_create` on Tag. There is no separate tag creation endpoint.
 
-**Tag filter logic:** Multiple `?tag=` params use OR logic — positions matching any of the selected tags are shown. Default (no tags selected) shows all positions.
+**Tag filter logic:** Multiple `?tag=` params use AND logic. `/tags/<tag1+tag2>/` is preserved as a URL alias for position browsing.
 
-**Position list ordering:** Sorted by `created_at` descending (newest first). No sort parameter.
+**Position list ordering:** Oldest-first by default, with explicit `sort=newest` support in the API contract.
 
-**PATCH tag semantics:** Supplying `tags[]` in a PATCH replaces the full tag set for that position.
+**Per-user state:** Position payloads now include `user_state`, `score_summary`, and `eligible_modes` when the request is authenticated.
 
 ### Template
 
-One Django template (`index.html`) renders the app shell. Assets resolved via `django-vite` (`{% vite_asset 'src/main.js' %}`).
+One Django template (`index.html`) still renders the SPA shell. Auth pages use Django templates under `templates/registration/`.
 
 ---
 
@@ -77,26 +97,27 @@ One Django template (`index.html`) renders the app shell. Assets resolved via `d
 **Toolchain:** Vite
 **Dependencies:** `chessground`, `chess.js`, `stockfish` (npm package, WASM)
 
-### Three Views (JS state machine, no router)
+### SPA shape
 
-#### 1. Library (default view)
-- Left sidebar: tag filter list (multi-select, clickable; OR logic)
-- Main area: grid/list of saved positions — name, tags, mini-board thumbnail
-- Each card has a "Play" button → navigates to Play view
-- Tag list pre-fetched from `GET /api/tags/` on Library mount
+- URL-driven state still lives in `router.js`
+- View modules still mount the three main screens: library, import, play
+- Network access now goes through thin `frontend/src/api/` helpers instead of raw `fetch` scattered through the views
+- Session bootstrap is centralized in `frontend/src/state/session.js`
+- Anonymous clients still fall back to local viewed-position storage; authenticated clients use the server-backed progress API
 
-#### 2. Import
-- Form: FEN input, name, notes, tag picker (type to add or select existing tags)
-- Tag picker pre-fetches all tags from `GET /api/tags/` on mount
-- Client-side FEN validation: attempt `new Chess(fen)` — if it throws, show inline error and block submission. This catches syntactically invalid and most illegal positions.
-- On save → redirect to Library
+### Current view behavior
 
-#### 3. Play
-- Main area: full-height Chessground board
-- Left sidebar: position info (name, FEN, tags), side selector (play as White or Black)
-- Right sidebar: vertical evaluation bar, engine depth/score, move history list
-- Controls: Resign button, "New game from same position" button
-- "Play Again" and "Back to Library" appear in the result overlay (not as persistent controls)
+- Library
+  - browses positions and imported games
+  - supports tag filters, viewed/unviewed filters, and paginated browsing
+  - shows account state inline in the header
+- Import
+  - imports manual FEN positions
+  - reuses the shared API layer and auth bootstrap
+- Play
+  - supports free play from saved positions and replay mode from imported games
+  - records authenticated practice attempts in `classic` mode
+  - persists analysis visibility via user settings when signed in, local storage otherwise
 
 ---
 
@@ -171,30 +192,46 @@ Use the `django-vite` package. Vite builds with `manifest: true` into `frontend/
 ```
 chessterfield/
   manage.py
-  chessterfield/         # Django project settings
+  chessterfield/
     settings.py
     urls.py
     wsgi.py
-  positions/             # Django app
+  positions/
     models.py
     views.py
     urls.py
+    api/
+    services/
     migrations/
+  users/
+    models.py
+    views.py
+    urls.py
+  progress/
+    models.py
+    views.py
+    services.py
+  practice/
+    modes.py
+    views.py
+    urls.py
   templates/
-    index.html           # App shell
-  frontend/              # Vite project
+    index.html
+    registration/
+  frontend/
     package.json
     vite.config.js
     src/
-      main.js            # Entry point, JS state machine
+      api/
+      state/
+      main.js
       views/
         library.js
         import.js
         play.js
       chess/
-        stockfish-worker.js
       style.css
-    dist/                # Vite build output (in STATICFILES_DIRS)
+    dist/
   docs/
     superpowers/
       specs/
@@ -203,12 +240,9 @@ chessterfield/
 
 ---
 
-## Out of Scope (for this phase)
+## Still Out of Scope
 
-- PGN game import
-- Game history / replay
-- Difficulty slider
-- User accounts / auth
-- Server-side Stockfish
-- Opening explorer
-- Mobile layout
+- server-side Stockfish
+- multiplayer or shared leaderboards
+- DRF / websocket infrastructure
+- replacing the vanilla SPA with a frontend framework
