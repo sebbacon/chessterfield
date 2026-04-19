@@ -194,6 +194,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let attemptClosed = false
   let pendingAttemptClose = null
   let puzzleState = createPuzzleState()
+  let puzzleSummary = createPuzzleSummary(position)
 
   // --- Worker setup ---
   try {
@@ -837,6 +838,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
   function sendAttemptClose(payload) {
     void finishPracticeAttempt(currentAttemptId, payload).then(response => {
+      puzzleSummary = mergePuzzleSummary(puzzleSummary, response.user_state)
       renderPuzzleFeedback({
         matchedPrefixPlies: response.attempt?.matched_prefix_plies ?? payload.matched_prefix_plies,
         targetDepthPlies: response.attempt?.target_depth_plies ?? payload.target_depth_plies,
@@ -915,6 +917,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     )
     if (userLine.length === 0) return
     puzzleState.expectedLine = userLine
+    puzzleState.targetDepthPlies = userLine.length
     puzzleState.expectedLineReady = true
     renderPuzzleFeedback({
       matchedPrefixPlies: puzzleState.matchedPrefixPlies,
@@ -988,8 +991,14 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   function renderPuzzleFeedback(summary) {
     const container = app.querySelector('#puzzle-feedback')
     if (!container || !isTrackedPuzzleAttempt()) return
+    const displaySummary = {
+      ...puzzleSummary,
+      ...summary,
+      attemptCount: Number(summary?.attemptCount ?? puzzleSummary.attemptCount ?? 0),
+      solvedCount: Number(summary?.solvedCount ?? puzzleSummary.solvedCount ?? 0),
+    }
     container.hidden = false
-    container.innerHTML = puzzleFeedbackHtml(summary, positionHistory[0].fen, puzzleState.expectedLine, puzzleState.playedLine)
+    container.innerHTML = puzzleFeedbackHtml(displaySummary)
   }
 
   function hidePuzzleFeedback() {
@@ -1242,9 +1251,9 @@ function preferredSideFromSession(session) {
 
 function accountLabel(session) {
   if (session.authenticated) {
-    return `${escapeHtml(session.user.display_name)} <a href="/accounts/logout/">Sign out</a>`
+    return `${escapeHtml(session.user.display_name)} <a class="account-link account-link-secondary" href="/accounts/logout/">Sign out</a>`
   }
-  return '<a href="/accounts/login/">Sign in</a>'
+  return '<a class="account-link account-link-secondary" href="/accounts/login/">Sign in</a>'
 }
 
 function scoreDeltaForResult(result) {
@@ -1278,6 +1287,22 @@ function createPuzzleState() {
   }
 }
 
+function createPuzzleSummary(position) {
+  const scoreSummary = position?.score_summary || {}
+  return {
+    attemptCount: Number(scoreSummary.attempt_count || 0),
+    solvedCount: Number(scoreSummary.solved_count || 0),
+  }
+}
+
+function mergePuzzleSummary(currentSummary, userState) {
+  if (!userState) return currentSummary
+  return {
+    attemptCount: Number(userState.attempt_count ?? currentSummary.attemptCount ?? 0),
+    solvedCount: Number(userState.solved_count ?? currentSummary.solvedCount ?? 0),
+  }
+}
+
 function moveToUci(move) {
   return `${move.from}${move.to}${move.promotion || ''}`
 }
@@ -1295,56 +1320,29 @@ function extractExpectedUserLine(fen, pv, userColor, targetDepthPlies) {
   return line
 }
 
-function puzzleFeedbackHtml(summary, fen, expectedLine, playedLine) {
-  const headline = summary.solved
-    ? `Solved the line: ${summary.matchedPrefixPlies}/${summary.targetDepthPlies}`
-    : `Matched ${summary.matchedPrefixPlies}/${summary.targetDepthPlies} best moves`
-  const detail = puzzleFeedbackDetail(summary.completionReason)
-  const expected = renderUciLine(fen, expectedLine)
-  const played = renderUciLine(fen, playedLine)
+function puzzleFeedbackHtml(summary) {
+  const headline = puzzleFeedbackHeadline(summary)
   return `
     <div class="puzzle-feedback-card">
-      <h3>Puzzle Tracking</h3>
-      <p class="puzzle-feedback-headline">${escapeHtml(headline)}</p>
-      <p class="puzzle-feedback-detail">${escapeHtml(detail)}</p>
-      ${expected ? `<p><strong>Target:</strong> ${escapeHtml(expected)}</p>` : ''}
-      ${played ? `<p><strong>Played:</strong> ${escapeHtml(played)}</p>` : ''}
+      <p class="puzzle-feedback-label">Puzzle record</p>
+      <p class="puzzle-feedback-stats">
+        <strong>Attempts:</strong> ${summary.attemptCount}
+        <span aria-hidden="true"> · </span>
+        <strong>Successful:</strong> ${summary.solvedCount}
+      </p>
+      ${headline ? `<p class="puzzle-feedback-headline">${escapeHtml(headline)}</p>` : ''}
     </div>
   `
 }
 
-function puzzleFeedbackDetail(reason) {
-  switch (reason) {
-    case 'solved':
-      return 'You matched the frozen top line for all tracked moves.'
-    case 'mismatch':
-      return 'The attempt was recorded when your move diverged from the top line.'
-    case 'restart':
-      return 'The attempt was recorded when you restarted the puzzle.'
-    case 'abandoned':
-      return 'The attempt was recorded when you left the puzzle.'
-    case 'completed':
-      return 'The attempt was recorded when you moved on.'
-    default:
-      return 'Signed-in puzzle performance is being tracked for this position.'
+function puzzleFeedbackHeadline(summary) {
+  if (summary.completionReason === 'tracking') {
+    return summary.matchedPrefixPlies > 0
+      ? `Current attempt: ${summary.matchedPrefixPlies}/${summary.targetDepthPlies}`
+      : ''
   }
-}
-
-function renderUciLine(fen, line) {
-  if (!Array.isArray(line) || line.length === 0) return ''
-  const board = new Chess(fen)
-  const sanMoves = []
-  for (const uciMove of line) {
-    try {
-      const move = board.move({
-        from: uciMove.slice(0, 2),
-        to: uciMove.slice(2, 4),
-        promotion: uciMove[4] || undefined,
-      })
-      sanMoves.push(move?.san || uciMove)
-    } catch {
-      sanMoves.push(uciMove)
-    }
+  if (summary.solved) {
+    return `Solved the line: ${summary.matchedPrefixPlies}/${summary.targetDepthPlies}`
   }
-  return sanMoves.join(' ')
+  return `Matched ${summary.matchedPrefixPlies}/${summary.targetDepthPlies} best moves`
 }

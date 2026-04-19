@@ -145,7 +145,7 @@ export async function mountImport(app, navigate) {
 function accountLabel(session) {
   return session.authenticated
     ? `Signed in as ${escapeHtml(session.user.display_name)}`
-    : '<a href="/accounts/login/">Sign in</a>'
+    : '<a class="account-link account-link-secondary" href="/accounts/login/">Sign in</a>'
 }
 
 function escapeHtml(str) {

@@ -106,6 +106,53 @@ body {
   font-size: 1.7rem;
 }
 
+.library-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.account-pill {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  color: #a9bdd3;
+  font-size: 0.9rem;
+}
+
+.account-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2rem;
+  padding: 0.38rem 0.8rem;
+  border-radius: 6px;
+  text-decoration: none;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.account-link-primary {
+  background: #e94560;
+  color: #fff;
+}
+
+.account-link-primary:hover {
+  background: #c73652;
+}
+
+.account-link-secondary {
+  background: #0f3460;
+  border: 1px solid #1a5276;
+  color: #e0e0e0;
+}
+
+.account-link-secondary:hover {
+  background: #1a5276;
+}
+
 /* Position grid */
 #library-grid {
   flex: 1;
@@ -479,6 +526,41 @@ body {
 
 /* Position info */
 .pos-info h2 { font-size: 1rem; margin-bottom: 4px; }
+
+.puzzle-feedback {
+  width: 100%;
+}
+
+.puzzle-feedback-card {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  padding: 0.8rem 0.9rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.puzzle-feedback-label {
+  margin: 0;
+  font-size: 0.75rem;
+  color: #aaa;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.puzzle-feedback-stats {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #d9e4ef;
+}
+
+.puzzle-feedback-headline {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #90caf9;
+  line-height: 1.45;
+}
 
 .viewed-pill {
   display: inline-flex;

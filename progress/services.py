@@ -112,6 +112,7 @@ def finish_practice_attempt(
     result: str,
     score_delta: int = 0,
     metadata: dict | None = None,
+    target_depth_plies: int | None = None,
     matched_prefix_plies: int | None = None,
     expected_line: list[str] | None = None,
     played_line: list[str] | None = None,
@@ -122,6 +123,8 @@ def finish_practice_attempt(
     attempt.result = result
     attempt.score_delta = score_delta
     attempt.finished_at = now
+    if target_depth_plies is not None:
+        attempt.target_depth_plies = max(1, int(target_depth_plies))
     if matched_prefix_plies is not None:
         attempt.matched_prefix_plies = matched_prefix_plies
     if expected_line is not None:
@@ -139,6 +142,7 @@ def finish_practice_attempt(
             "result",
             "score_delta",
             "finished_at",
+            "target_depth_plies",
             "matched_prefix_plies",
             "expected_line",
             "played_line",

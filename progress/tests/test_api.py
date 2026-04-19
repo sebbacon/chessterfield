@@ -292,3 +292,39 @@ def test_position_list_filters_by_homework_flag(authed_client, user):
 
     assert response.status_code == 200
     assert [row['name'] for row in payload['results']] == ['Homework']
+
+
+@pytest.mark.django_db
+def test_practice_attempt_counts_short_solution_as_solved(authed_client, user, position):
+    start_response = authed_client.post(
+        '/api/practice/attempts/',
+        json.dumps({
+            'position_id': position.id,
+            'mode': 'classic',
+            'target_depth_plies': 4,
+        }),
+        content_type='application/json',
+    )
+    attempt_id = json.loads(start_response.content)['id']
+
+    finish_response = authed_client.patch(
+        f'/api/practice/attempts/{attempt_id}/',
+        json.dumps({
+            'result': 'completed',
+            'target_depth_plies': 2,
+            'matched_prefix_plies': 2,
+            'expected_line': ['d1h5', 'f1c4'],
+            'played_line': ['d1h5', 'f1c4'],
+            'completion_reason': 'solved',
+            'completed_normally': True,
+        }),
+        content_type='application/json',
+    )
+
+    assert finish_response.status_code == 200
+    attempt = PracticeAttempt.objects.get(pk=attempt_id)
+    state = UserPositionState.objects.get(user=user, position=position)
+    assert attempt.target_depth_plies == 2
+    assert attempt.matched_prefix_plies == 2
+    assert state.solved_count == 1
+    assert state.status == UserPositionState.Status.COMPLETED

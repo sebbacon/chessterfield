@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import UserProfile, UserSettings
+from .models import SignupCode, UserProfile, UserSettings
 
 
 @admin.register(UserProfile)
@@ -15,3 +15,10 @@ class UserSettingsAdmin(admin.ModelAdmin):
     list_filter = ("preferred_side", "analysis_visibility", "default_library_mode")
     search_fields = ("user__username",)
 
+
+@admin.register(SignupCode)
+class SignupCodeAdmin(admin.ModelAdmin):
+    list_display = ("code", "label", "is_active", "created_at")
+    list_filter = ("is_active",)
+    list_editable = ("is_active",)
+    search_fields = ("code", "label")

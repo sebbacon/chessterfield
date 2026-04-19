@@ -1,19 +1,37 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign Up - Chessterfield</title>
-</head>
-<body>
-  <main style="max-width:28rem;margin:4rem auto;font-family:sans-serif">
-    <h1>Create account</h1>
-    <form method="post">
-      {% csrf_token %}
-      {{ form.as_p }}
-      <button type="submit">Create account</button>
-    </form>
-    <p><a href="{% url 'login' %}">Already have an account?</a></p>
-  </main>
-</body>
-</html>
+{% extends "registration/base.html" %}
+
+{% block title %}Create Account{% endblock %}
+
+{% block heading %}
+  <h1>Create account</h1>
+  <p class="auth-copy">Create an account to track puzzle history, surface weak positions, and keep your settings in sync.</p>
+{% endblock %}
+
+{% block content %}
+  <form method="post" class="auth-form">
+    {% csrf_token %}
+    {% if form.non_field_errors %}
+      <div class="auth-alert">
+        {% for error in form.non_field_errors %}
+          <p>{{ error }}</p>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% for field in form %}
+      <label class="auth-field" for="{{ field.id_for_label }}">
+        <span>{{ field.label }}</span>
+        {{ field }}
+        {% if field.help_text %}
+          <small class="auth-help">{{ field.help_text|safe }}</small>
+        {% endif %}
+        {% for error in field.errors %}
+          <small class="auth-error">{{ error }}</small>
+        {% endfor %}
+      </label>
+    {% endfor %}
+    <div class="auth-actions">
+      <button type="submit" class="auth-btn auth-btn-primary">Create account</button>
+      <a class="auth-btn auth-btn-secondary" href="{% url 'login' %}">Already have an account?</a>
+    </div>
+  </form>
+{% endblock %}

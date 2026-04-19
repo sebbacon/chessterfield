@@ -63,6 +63,7 @@ def attempt_detail(request, pk: int):
     result = data.get("result")
     if result not in PracticeAttempt.Result.values:
         return JsonResponse({"error": "Invalid result"}, status=400)
+    target_depth_plies = max(1, int(data.get("target_depth_plies", attempt.target_depth_plies)))
     matched_prefix_plies = max(0, int(data.get("matched_prefix_plies", 0)))
     expected_line = _normalize_line(data.get("expected_line"))
     played_line = _normalize_line(data.get("played_line"))
@@ -72,6 +73,7 @@ def attempt_detail(request, pk: int):
         result=result,
         score_delta=int(data.get("score_delta", matched_prefix_plies)),
         metadata=data.get("metadata"),
+        target_depth_plies=target_depth_plies,
         matched_prefix_plies=matched_prefix_plies,
         expected_line=expected_line,
         played_line=played_line,

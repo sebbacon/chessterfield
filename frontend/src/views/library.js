@@ -507,9 +507,9 @@ function showToast(msg) {
 
 function accountLabel(session) {
   if (session.authenticated) {
-    return `${escapeHtml(session.user.display_name)} <a href="/accounts/logout/">Sign out</a>`
+    return `${escapeHtml(session.user.display_name)} <a class="account-link account-link-secondary" href="/accounts/logout/">Sign out</a>`
   }
-  return '<a href="/accounts/login/">Sign in</a> <a href="/accounts/signup/">Create account</a>'
+  return '<a class="account-link account-link-secondary" href="/accounts/login/">Sign in</a> <a class="account-link account-link-primary" href="/accounts/signup/">Create account</a>'
 }
 
 function getMobileQuery() {

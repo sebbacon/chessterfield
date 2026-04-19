@@ -9,7 +9,7 @@ from django.views.decorators.http import require_http_methods
 from practice.modes import PRACTICE_MODES
 
 from .forms import SignupForm
-from .models import UserSettings
+from .models import UserProfile, UserSettings
 
 
 def signup_view(request):
@@ -32,9 +32,14 @@ def _settings_to_dict(settings: UserSettings) -> dict:
     }
 
 
+def _ensure_user_records(user) -> tuple[UserProfile, UserSettings]:
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    settings, _ = UserSettings.objects.get_or_create(user=user)
+    return profile, settings
+
+
 def _user_to_dict(user) -> dict:
-    profile = user.profile
-    settings = user.settings
+    profile, settings = _ensure_user_records(user)
     return {
         "id": user.id,
         "username": user.get_username(),
@@ -63,7 +68,7 @@ def me_settings(request):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-    settings = request.user.settings
+    _profile, settings = _ensure_user_records(request.user)
     allowed_fields = {
         "preferred_side": {choice for choice, _label in UserSettings.PreferredSide.choices},
         "analysis_visibility": {choice for choice, _label in UserSettings.AnalysisVisibility.choices},
@@ -84,4 +89,3 @@ def me_settings(request):
         settings.save(update_fields=updated_fields + ["updated_at"])
 
     return JsonResponse({"settings": _settings_to_dict(settings)})
-
