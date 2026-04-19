@@ -30,7 +30,7 @@ def parse_position_filters(request) -> PositionFilters:
 
 
 def normalize_progress_filter(value: str | None) -> str:
-    allowed = {"all", "viewed", "unviewed", "in_progress", "completed", "mastered"}
+    allowed = {"all", "viewed", "unviewed", "in_progress", "completed", "mastered", "homework", "perfect"}
     return value if value in allowed else "all"
 
 
@@ -77,5 +77,8 @@ def apply_progress_filter(queryset, progress: str, user):
         return queryset.annotate(has_state=Exists(state_qs.filter(viewed_at__isnull=False))).filter(has_state=True)
     if progress == "unviewed":
         return queryset.annotate(has_state=Exists(state_qs.filter(viewed_at__isnull=False))).filter(has_state=False)
+    if progress == "homework":
+        return queryset.filter(user_states__user=user, user_states__needs_homework=True)
+    if progress == "perfect":
+        return queryset.filter(user_states__user=user, user_states__perfect_record=True)
     return queryset.filter(user_states__user=user, user_states__status=progress)
-

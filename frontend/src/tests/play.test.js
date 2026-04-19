@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mountPlay } from '../views/play.js'
 import { isPositionViewed } from '../viewed-positions.js'
+import { resetSessionCache } from '../state/session.js'
 
 // --- Module mocks (hoisted) ---
 
@@ -42,6 +43,12 @@ function mockPosition(fen = STARTING_FEN) {
   ))
 }
 
+async function flush() {
+  await Promise.resolve()
+  await Promise.resolve()
+  await new Promise(resolve => setTimeout(resolve, 0))
+}
+
 // --- Tests ---
 
 describe('Play view game loop', () => {
@@ -52,6 +59,7 @@ describe('Play view game loop', () => {
   let cgMock  // the cg instance returned by the mocked Chessground
 
   beforeEach(() => {
+    resetSessionCache()
     app = makeApp()
     navigate = vi.fn()
     syncState = vi.fn()
@@ -447,5 +455,129 @@ describe('Play view game loop', () => {
     expect(syncState).toHaveBeenCalledWith({
       play: { ply: 1, side: 'white' },
     }, { replace: false })
+  })
+
+  it('does not persist puzzle attempts for anonymous users', async () => {
+    const fetchMock = vi.fn((url) =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 1, name: 'Test', fen: STARTING_FEN, notes: '', tags: [], next_position_id: null }),
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    await flush()
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 52 nodes 8000 time 120 pv e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/practice/attempts/'))).toBe(false)
+  })
+
+  it('records a signed-in solved puzzle against the frozen best line', async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 1, name: 'Puzzle', fen: STARTING_FEN, notes: '', tags: [], next_position_id: null }),
+        })
+      }
+      if (url === '/api/progress/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ user_state: { viewed_at: '2026-04-19T10:00:00Z' } }),
+        })
+      }
+      if (url === '/api/practice/attempts/' && options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 99, mode: 'classic', result: 'active', started_at: '2026-04-19T10:00:00Z', target_depth_plies: 4 }),
+        })
+      }
+      if (url === '/api/practice/attempts/99/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            attempt: {
+              id: 99,
+              result: 'completed',
+              score_delta: 4,
+              target_depth_plies: 4,
+              matched_prefix_plies: 4,
+              completion_reason: 'solved',
+              completed_normally: true,
+              expected_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+              played_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+              finished_at: '2026-04-19T10:05:00Z',
+            },
+            user_state: {
+              status: 'completed',
+              attempt_count: 1,
+              best_score: 4,
+              last_score: 4,
+              best_matched_prefix_plies: 4,
+              last_matched_prefix_plies: 4,
+              solved_count: 1,
+            },
+          }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 52 nodes 8000 time 120 pv e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 20 nodes 4000 time 100 pv e7e5 g1f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+
+    capturedCgConfig.movable.events.after('g1', 'f3')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 18 nodes 4000 time 100 pv b8c6 f1c4' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove b8c6' } })
+
+    capturedCgConfig.movable.events.after('f1', 'c4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 15 nodes 4000 time 100 pv g8f6 d2d3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove g8f6' } })
+
+    capturedCgConfig.movable.events.after('d2', 'd3')
+    await flush()
+
+    const closeCall = fetchMock.mock.calls.find(([url, options]) => url === '/api/practice/attempts/99/' && options?.method === 'PATCH')
+    expect(closeCall).toBeTruthy()
+    const [, options] = closeCall
+    expect(JSON.parse(options.body)).toMatchObject({
+      result: 'completed',
+      matched_prefix_plies: 4,
+      completion_reason: 'solved',
+      completed_normally: true,
+      expected_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+      played_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+    })
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved the line: 4/4')
   })
 })

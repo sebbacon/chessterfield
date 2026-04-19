@@ -22,6 +22,11 @@ export function getCachedSession() {
   return cachedSession
 }
 
+export function resetSessionCache() {
+  sessionPromise = null
+  cachedSession = anonymousSession()
+}
+
 function normalizeSession(data) {
   return {
     authenticated: Boolean(data?.authenticated),
@@ -37,4 +42,3 @@ function anonymousSession() {
     practiceModes: [],
   }
 }
-

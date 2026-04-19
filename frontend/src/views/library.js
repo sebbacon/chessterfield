@@ -22,7 +22,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
           </div>
         </div>
         <div class="sidebar-section" id="viewed-section">
-          <h2>Viewed</h2>
+          <h2 id="viewed-section-title">Viewed</h2>
           <div id="viewed-filter-list"></div>
         </div>
         <div class="sidebar-section" id="tag-section">
@@ -63,7 +63,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   let allTags = []
   let mode = initialState.mode === 'games' ? 'games' : 'positions'
   let selectedTags = new Set(initialState.tags || [])
-  let viewedFilter = normalizeViewedFilter(initialState.viewed)
+  let viewedFilter = normalizeViewedFilter(initialState.viewed, session.authenticated)
   let viewedPositionIds = getViewedPositionIds()
   let requestSeq = 0
   let isSidebarOpen = false
@@ -117,6 +117,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     const title = app.querySelector('#library-title')
     const importBtn = app.querySelector('#go-import')
     const viewedSection = app.querySelector('#viewed-section')
+    const viewedSectionTitle = app.querySelector('#viewed-section-title')
     const tagSection = app.querySelector('#tag-section')
 
     positionsBtn.classList.toggle('active', mode === 'positions')
@@ -124,16 +125,28 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     title.textContent = mode === 'positions' ? 'Positions' : 'Games'
     importBtn.hidden = mode !== 'positions'
     viewedSection.hidden = mode !== 'positions'
+    viewedSectionTitle.textContent = session.authenticated ? 'Progress' : 'Viewed'
     tagSection.hidden = mode !== 'positions'
   }
 
   function renderViewedFilters() {
     const container = app.querySelector('#viewed-filter-list')
-    const options = [
-      ['all', 'All positions'],
-      ['viewed', 'Viewed'],
-      ['unviewed', 'Not viewed'],
-    ]
+    const options = session.authenticated
+      ? [
+          ['all', 'All positions'],
+          ['viewed', 'Viewed'],
+          ['unviewed', 'Not viewed'],
+          ['in_progress', 'In progress'],
+          ['completed', 'Completed'],
+          ['mastered', 'Mastered'],
+          ['homework', 'Homework'],
+          ['perfect', 'Perfect record'],
+        ]
+      : [
+          ['all', 'All positions'],
+          ['viewed', 'Viewed'],
+          ['unviewed', 'Not viewed'],
+        ]
     container.innerHTML = options.map(([value, label]) => `
       <label class="viewed-filter-option ${viewedFilter === value ? 'active' : ''}">
         <input type="radio" name="viewed-filter" value="${value}" ${viewedFilter === value ? 'checked' : ''}>
@@ -143,7 +156,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
 
     container.querySelectorAll('input[name=viewed-filter]').forEach(input => {
       input.addEventListener('change', () => {
-        viewedFilter = normalizeViewedFilter(input.value)
+        viewedFilter = normalizeViewedFilter(input.value, session.authenticated)
         pages.positions.current = 1
         pages.positions.total = 1
         syncLibraryState()
@@ -387,8 +400,9 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   await Promise.all([loadTags(), loadCurrent()])
 }
 
-function normalizeViewedFilter(value) {
-  return value === 'viewed' || value === 'unviewed' ? value : 'all'
+function normalizeViewedFilter(value, authenticated = false) {
+  const allowed = authenticated ? AUTHENTICATED_PROGRESS_FILTERS : ANONYMOUS_PROGRESS_FILTERS
+  return allowed.has(value) ? value : 'all'
 }
 
 async function fetchPositionPage(tags, page) {
@@ -424,9 +438,7 @@ function matchesViewedFilter(positionId, viewedFilter, viewedIds) {
 }
 
 function viewedFilterToProgress(viewedFilter) {
-  if (viewedFilter === 'viewed') return 'viewed'
-  if (viewedFilter === 'unviewed') return 'unviewed'
-  return 'all'
+  return AUTHENTICATED_PROGRESS_FILTERS.has(viewedFilter) ? viewedFilter : 'all'
 }
 
 function emptyPositionsMessage(viewedFilter) {
@@ -436,8 +448,36 @@ function emptyPositionsMessage(viewedFilter) {
   if (viewedFilter === 'unviewed') {
     return 'No unviewed positions match these filters.'
   }
+  if (viewedFilter === 'in_progress') {
+    return 'No in-progress positions match these filters.'
+  }
+  if (viewedFilter === 'completed') {
+    return 'No completed positions match these filters.'
+  }
+  if (viewedFilter === 'mastered') {
+    return 'No mastered positions match these filters.'
+  }
+  if (viewedFilter === 'homework') {
+    return 'No homework positions match these filters.'
+  }
+  if (viewedFilter === 'perfect') {
+    return 'No perfect-record positions match these filters.'
+  }
   return 'No positions yet. Import one!'
 }
+
+const ANONYMOUS_PROGRESS_FILTERS = new Set(['all', 'viewed', 'unviewed'])
+
+const AUTHENTICATED_PROGRESS_FILTERS = new Set([
+  'all',
+  'viewed',
+  'unviewed',
+  'in_progress',
+  'completed',
+  'mastered',
+  'homework',
+  'perfect',
+])
 
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1)

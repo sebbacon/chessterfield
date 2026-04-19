@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resetSessionCache } from '../state/session.js'
 import { mountLibrary } from '../views/library.js'
 
 
@@ -34,10 +35,14 @@ describe('Library view', () => {
   let syncState
 
   beforeEach(() => {
+    resetSessionCache()
     app = makeApp()
     navigate = vi.fn()
     syncState = vi.fn()
     vi.stubGlobal('fetch', vi.fn((url) => {
+      if (url === '/api/me/') {
+        return makeResponse({ authenticated: false, user: null, practice_modes: [] })
+      }
       if (url === '/api/tags/') return makeResponse([])
       if (String(url).startsWith('/api/positions/')) {
         return makeResponse({
@@ -100,6 +105,9 @@ describe('Library view', () => {
   it('filters positions by viewed status from local storage', async () => {
     window.localStorage.setItem('chessterfield:viewed-positions:v1', JSON.stringify({ 1: '2026-03-21T10:00:00.000Z' }))
     vi.stubGlobal('fetch', vi.fn((url) => {
+      if (url === '/api/me/') {
+        return makeResponse({ authenticated: false, user: null, practice_modes: [] })
+      }
       if (url === '/api/tags/') return makeResponse([])
       if (String(url).startsWith('/api/positions/?page=1')) {
         return makeResponse({
@@ -129,6 +137,51 @@ describe('Library view', () => {
     expect(app.textContent).not.toContain('Viewed Position')
     expect(syncState).toHaveBeenCalledWith({
       library: { mode: 'positions', page: 1, tags: [], viewed: 'unviewed' },
+      play: { ply: null, side: null },
+    }, { replace: false })
+  })
+
+  it('shows homework filters for signed-in users and queries the backend with them', async () => {
+    vi.stubGlobal('fetch', vi.fn((url) => {
+      if (url === '/api/me/') {
+        return makeResponse({
+          authenticated: true,
+          user: { display_name: 'Player One' },
+          practice_modes: [],
+        })
+      }
+      if (url === '/api/tags/') return makeResponse([])
+      if (String(url).startsWith('/api/positions/?page=1&progress=homework')) {
+        return makeResponse({
+          results: [{ id: 3, name: 'Homework Position', fen: STARTING_FEN, tags: [] }],
+          count: 1,
+          page: 1,
+          total_pages: 1,
+        })
+      }
+      if (String(url).startsWith('/api/positions/?page=1')) {
+        return makeResponse({
+          results: [{ id: 1, name: 'Starting Position', fen: STARTING_FEN, tags: [] }],
+          count: 1,
+          page: 1,
+          total_pages: 1,
+        })
+      }
+      throw new Error(`Unhandled fetch ${url}`)
+    }))
+
+    await mountLibrary(app, navigate, {}, syncState)
+
+    expect(app.querySelector('#viewed-section-title')?.textContent).toBe('Progress')
+    expect(app.textContent).toContain('Homework')
+    expect(app.textContent).toContain('Perfect record')
+
+    app.querySelector('input[name="viewed-filter"][value="homework"]').click()
+    await flush()
+
+    expect(app.textContent).toContain('Homework Position')
+    expect(syncState).toHaveBeenCalledWith({
+      library: { mode: 'positions', page: 1, tags: [], viewed: 'homework' },
       play: { ply: null, side: null },
     }, { replace: false })
   })

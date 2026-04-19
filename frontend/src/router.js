@@ -134,8 +134,20 @@ function clampPositiveInt(value, fallback) {
 }
 
 function normalizeViewedFilter(value) {
-  return value === 'viewed' || value === 'unviewed' ? value : 'all'
+  return PROGRESS_FILTER_VALUES.has(value) ? value : 'all'
 }
+
+
+const PROGRESS_FILTER_VALUES = new Set([
+  'all',
+  'viewed',
+  'unviewed',
+  'in_progress',
+  'completed',
+  'mastered',
+  'homework',
+  'perfect',
+])
 
 function normalizePlaySide(value) {
   return value === 'white' || value === 'black' ? value : null

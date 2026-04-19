@@ -17,6 +17,13 @@ def position_to_dict(pos, *, user_state=None):
             "best_score": state_payload["best_score"],
             "last_score": state_payload["last_score"],
             "mastery_score": state_payload["mastery_score"],
+            "recent_accuracy_score": state_payload["recent_accuracy_score"],
+            "current_perfect_streak": state_payload["current_perfect_streak"],
+            "perfect_record": state_payload["perfect_record"],
+            "needs_homework": state_payload["needs_homework"],
+            "best_matched_prefix_plies": state_payload["best_matched_prefix_plies"],
+            "last_matched_prefix_plies": state_payload["last_matched_prefix_plies"],
+            "solved_count": state_payload["solved_count"],
             "attempt_count": state_payload["attempt_count"],
         },
         "eligible_modes": eligible_modes_for_position(),
@@ -69,4 +76,3 @@ def source_kind_from_value(source: str | None) -> str:
     if source.startswith("lichess:"):
         return "lichess"
     return "other"
-

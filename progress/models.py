@@ -28,6 +28,13 @@ class UserPositionState(models.Model):
     mastery_score = models.IntegerField(default=0)
     best_score = models.IntegerField(default=0)
     last_score = models.IntegerField(default=0)
+    recent_accuracy_score = models.IntegerField(default=0)
+    current_perfect_streak = models.PositiveIntegerField(default=0)
+    perfect_record = models.BooleanField(default=False)
+    needs_homework = models.BooleanField(default=True)
+    best_matched_prefix_plies = models.PositiveSmallIntegerField(default=0)
+    last_matched_prefix_plies = models.PositiveSmallIntegerField(default=0)
+    solved_count = models.PositiveIntegerField(default=0)
     attempt_count = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -62,6 +69,12 @@ class PracticeAttempt(models.Model):
     mode = models.CharField(max_length=30)
     result = models.CharField(max_length=20, choices=Result.choices, default=Result.ACTIVE)
     score_delta = models.IntegerField(default=0)
+    target_depth_plies = models.PositiveSmallIntegerField(default=4)
+    matched_prefix_plies = models.PositiveSmallIntegerField(default=0)
+    completion_reason = models.CharField(max_length=30, blank=True)
+    completed_normally = models.BooleanField(default=False)
+    expected_line = models.JSONField(default=list, blank=True)
+    played_line = models.JSONField(default=list, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True, blank=True)
@@ -73,4 +86,3 @@ class PracticeAttempt(models.Model):
 
     def __str__(self):
         return f"{self.user.get_username()} {self.mode} {self.position_id}"
-

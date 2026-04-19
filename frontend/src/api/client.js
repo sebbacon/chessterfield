@@ -41,5 +41,10 @@ async function parseJson(response) {
 }
 
 export function getCsrfToken() {
-  return document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] ?? ''
+  try {
+    const cookieSource = typeof document === 'undefined' ? '' : (document.cookie || '')
+    return cookieSource.split(';').map(c => c.trim()).find(c => c.startsWith('csrftoken='))?.split('=')[1] ?? ''
+  } catch {
+    return ''
+  }
 }

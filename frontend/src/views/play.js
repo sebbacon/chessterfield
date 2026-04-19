@@ -19,6 +19,7 @@ const HINT_MOVETIME_MS = 1000
 const ENGINE_MOVETIME_MS = 3000
 const ANALYSIS_VARIATIONS = 4
 const ANALYSIS_VISIBILITY_STORAGE_KEY = 'chessterfield:analysis-visibility:v1'
+const PUZZLE_TARGET_DEPTH_PLIES = 4
 
 function isCrossOriginWorkerError(error) {
   return error instanceof DOMException && error.name === 'SecurityError'
@@ -91,7 +92,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     return
   }
 
-  const viewedStatus = !isGame ? await markPositionViewed(position.id) : null
+  const viewedStatus = !isGame ? await markPositionViewed(position.id, session) : null
   const nextPositionId = !isGame ? position.next_position_id : null
   const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || activeTagFilters.length > 0)
   const nextActionLabel = nextPositionId ? 'Next Position →' : 'Back to Library →'
@@ -160,6 +161,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
           <p class="fen-display">${escapeHtml(position.fen)}</p>
         </div>
+        <div id="puzzle-feedback" class="puzzle-feedback" hidden></div>
         <div class="side-selector" ${browseOnly ? 'hidden' : ''}>
           <p>Play as</p>
           <div class="side-buttons">
@@ -190,6 +192,8 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let viewIndex = positionHistory.length - 1  // which position in positionHistory is displayed
   let currentAttemptId = null
   let attemptClosed = false
+  let pendingAttemptClose = null
+  let puzzleState = createPuzzleState()
 
   // --- Worker setup ---
   try {
@@ -356,6 +360,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     const record = buildAnalysisRecord(search, bestmoveUci)
     if (record) {
       analysisByPly.set(search.ply, record)
+      maybeFreezePuzzleLine(search, record)
       updateMoveHistory()
       if (search.ply === viewIndex) renderAnalysisForPly(search.ply)
     }
@@ -376,10 +381,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (search.kind === 'engineMove') {
       engineMoving = false
       updateHintBtn()
+      maybeEnableUserMoves()
       if (bestmoveUci) applyEngineMove(bestmoveUci)
       return
     }
 
+    maybeEnableUserMoves()
     updateHintBtn()
   }
 
@@ -518,7 +525,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     pendingEngineGo = false
     currentSearch = null
     sendToEngine('stop')
-    closeActiveAttempt(resultCodeForText(text))
+    closeActiveAttempt(resultCodeForText(text), { completionReason: 'game_end' })
     app.querySelector('#result-text').textContent = text
     app.querySelector('#result-overlay').classList.remove('hidden')
   }
@@ -550,6 +557,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (browseOnly || !workerReady || engineMoving) return false
     if (!isUserTurn()) return false
     if (gameOver && atLatest()) return false
+    if (requiresPuzzleLine() && !puzzleState.expectedLineReady) return false
     return true
   }
 
@@ -562,10 +570,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
     const move = chess.move({ from: orig, to: dest, promotion })
     if (!move) return false
+    const moveUci = moveToUci(move)
 
     hintMode = false
     clearHint()
     positionHistory.push({ fen: chess.fen(), lastMove: [orig, dest], moveSan: move.san })
+    notePuzzleUserMove(moveUci)
     viewIndex = positionHistory.length - 1
     updateMoveHistory()
     updateNavButtons()
@@ -703,7 +713,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   })
 
   function goToNextPositionOrLibrary() {
-    closeActiveAttempt('completed')
+    closeActiveAttempt('completed', { completionReason: 'completed' })
     teardownWorker()
     if (nextPositionId) {
       navigate('play', nextPositionId, {
@@ -723,7 +733,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!browseOnly) startGame({ replaceUrl: true })
   })
 
-  app.querySelector('#back-btn').addEventListener('click', () => { closeActiveAttempt('abandoned'); teardownWorker(); navigate('library') })
+  app.querySelector('#back-btn').addEventListener('click', () => { closeActiveAttempt('abandoned', { completionReason: 'abandoned' }); teardownWorker(); navigate('library') })
   app.querySelector('#next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
 
   // --- Result panel buttons ---
@@ -732,7 +742,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   // --- Start / restart game ---
   function startGame({ replaceUrl = true } = {}) {
     if (currentAttemptId && !attemptClosed) {
-      closeActiveAttempt('abandoned')
+      closeActiveAttempt('abandoned', { completionReason: 'restart' })
     }
     gameOver = false
     engineMoving = false
@@ -741,6 +751,10 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     currentSearch = null
     analysisByPly = new Map()
     positionHistory = initialHistory.map(step => ({ ...step }))
+    puzzleState = createPuzzleState()
+    currentAttemptId = null
+    attemptClosed = false
+    pendingAttemptClose = null
     viewIndex = browseOnly
       ? clampPly(initialPlayState.ply, positionHistory.length - 1, positionHistory.length - 1)
       : 0
@@ -752,6 +766,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     app.querySelector('#analysis-spinner').className = 'analysis-spinner'
     app.querySelector('#analysis-lines').innerHTML = '<p class="analysis-placeholder">Step through moves or wait for analysis.</p>'
     renderAnalysisForPly(viewIndex)
+    hidePuzzleFeedback()
 
     if (cg) cg.destroy()
     initBoard()
@@ -780,32 +795,56 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   }
 
   function beginPracticeAttempt() {
-    if (browseOnly || !session.authenticated) return
+    if (!isTrackedPuzzleAttempt()) return
     attemptClosed = false
     createPracticeAttempt({
       position_id: position.id,
       mode: 'classic',
+      target_depth_plies: puzzleState.targetDepthPlies,
       metadata: {
         start_fen: position.fen,
+        tracked_puzzle: true,
       },
     }).then(payload => {
       currentAttemptId = payload.id
+      puzzleState.targetDepthPlies = payload.target_depth_plies || puzzleState.targetDepthPlies
+      if (pendingAttemptClose) {
+        const queuedPayload = pendingAttemptClose
+        pendingAttemptClose = null
+        sendAttemptClose(queuedPayload)
+      }
     }).catch(() => {
       currentAttemptId = null
     })
   }
 
-  function closeActiveAttempt(result) {
-    if (!session.authenticated || !currentAttemptId || attemptClosed) return
+  function closeActiveAttempt(result, options = {}) {
+    if (!session.authenticated || attemptClosed || browseOnly) return
     attemptClosed = true
-    void finishPracticeAttempt(currentAttemptId, {
-      result,
-      score_delta: scoreDeltaForResult(result),
-      metadata: {
-        final_fen: chess.fen(),
-        ply: viewIndex,
-      },
+    const payload = buildAttemptClosePayload(result, options)
+    renderPuzzleFeedback({
+      matchedPrefixPlies: payload.matched_prefix_plies,
+      targetDepthPlies: payload.target_depth_plies,
+      completionReason: payload.completion_reason,
+      solved: payload.matched_prefix_plies >= payload.target_depth_plies,
     })
+    if (!currentAttemptId) {
+      pendingAttemptClose = payload
+      return
+    }
+    sendAttemptClose(payload)
+  }
+
+  function sendAttemptClose(payload) {
+    void finishPracticeAttempt(currentAttemptId, payload).then(response => {
+      renderPuzzleFeedback({
+        matchedPrefixPlies: response.attempt?.matched_prefix_plies ?? payload.matched_prefix_plies,
+        targetDepthPlies: response.attempt?.target_depth_plies ?? payload.target_depth_plies,
+        completionReason: response.attempt?.completion_reason ?? payload.completion_reason,
+        solved: (response.attempt?.matched_prefix_plies ?? payload.matched_prefix_plies)
+          >= (response.attempt?.target_depth_plies ?? payload.target_depth_plies),
+      })
+    }).catch(() => {})
   }
 
   function createMoveToken(text, ply) {
@@ -862,6 +901,102 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       score: { cp: variations[0].cp, mate: variations[0].mate },
       variations,
     }
+  }
+
+  function maybeFreezePuzzleLine(search, record) {
+    if (!isTrackedPuzzleAttempt() || puzzleState.expectedLineReady) return
+    if (search.ply !== 0) return
+    const primaryVariation = record?.variations?.[0]
+    const userLine = extractExpectedUserLine(
+      positionHistory[0].fen,
+      primaryVariation?.pv || [],
+      userColor,
+      puzzleState.targetDepthPlies,
+    )
+    if (userLine.length === 0) return
+    puzzleState.expectedLine = userLine
+    puzzleState.expectedLineReady = true
+    renderPuzzleFeedback({
+      matchedPrefixPlies: puzzleState.matchedPrefixPlies,
+      targetDepthPlies: puzzleState.targetDepthPlies,
+      completionReason: 'tracking',
+      solved: false,
+    })
+    maybeEnableUserMoves()
+  }
+
+  function notePuzzleUserMove(moveUci) {
+    if (!isTrackedPuzzleAttempt() || attemptClosed) return
+    puzzleState.playedLine.push(moveUci)
+    if (!puzzleState.expectedLineReady) return
+
+    const expectedMove = puzzleState.expectedLine[puzzleState.playedLine.length - 1]
+    if (sameMove(expectedMove, moveUci)) {
+      puzzleState.matchedPrefixPlies = puzzleState.playedLine.length
+      renderPuzzleFeedback({
+        matchedPrefixPlies: puzzleState.matchedPrefixPlies,
+        targetDepthPlies: puzzleState.targetDepthPlies,
+        completionReason: 'tracking',
+        solved: false,
+      })
+      if (puzzleState.matchedPrefixPlies >= puzzleState.targetDepthPlies) {
+        closeActiveAttempt('completed', {
+          completionReason: 'solved',
+          completedNormally: true,
+        })
+      }
+      return
+    }
+
+    closeActiveAttempt('lost', {
+      completionReason: 'mismatch',
+      completedNormally: false,
+    })
+  }
+
+  function buildAttemptClosePayload(result, options = {}) {
+    return {
+      result,
+      target_depth_plies: puzzleState.targetDepthPlies,
+      matched_prefix_plies: puzzleState.matchedPrefixPlies,
+      score_delta: puzzleState.matchedPrefixPlies,
+      expected_line: puzzleState.expectedLine,
+      played_line: puzzleState.playedLine,
+      completion_reason: options.completionReason || '',
+      completed_normally: Boolean(options.completedNormally),
+      metadata: {
+        final_fen: chess.fen(),
+        ply: viewIndex,
+      },
+    }
+  }
+
+  function maybeEnableUserMoves() {
+    if (!cg || browseOnly || !workerReady || engineMoving || !isUserTurn() || gameOver || !atLatest()) return
+    if (requiresPuzzleLine() && !puzzleState.expectedLineReady) return
+    cg.set({ movable: { color: userColor, dests: toDests(chess) } })
+  }
+
+  function isTrackedPuzzleAttempt() {
+    return session.authenticated && !browseOnly
+  }
+
+  function requiresPuzzleLine() {
+    return isTrackedPuzzleAttempt() && !attemptClosed
+  }
+
+  function renderPuzzleFeedback(summary) {
+    const container = app.querySelector('#puzzle-feedback')
+    if (!container || !isTrackedPuzzleAttempt()) return
+    container.hidden = false
+    container.innerHTML = puzzleFeedbackHtml(summary, positionHistory[0].fen, puzzleState.expectedLine, puzzleState.playedLine)
+  }
+
+  function hidePuzzleFeedback() {
+    const container = app.querySelector('#puzzle-feedback')
+    if (!container) return
+    container.hidden = true
+    container.innerHTML = ''
   }
 
   function highestDepth(lines) {
@@ -1131,4 +1266,85 @@ function resultCodeForText(text) {
   if (text.includes('You resigned')) return 'abandoned'
   if (text.includes('Engine wins')) return 'lost'
   return 'completed'
+}
+
+function createPuzzleState() {
+  return {
+    targetDepthPlies: PUZZLE_TARGET_DEPTH_PLIES,
+    expectedLine: [],
+    expectedLineReady: false,
+    playedLine: [],
+    matchedPrefixPlies: 0,
+  }
+}
+
+function moveToUci(move) {
+  return `${move.from}${move.to}${move.promotion || ''}`
+}
+
+function extractExpectedUserLine(fen, pv, userColor, targetDepthPlies) {
+  const line = []
+  let turn = fenSideToColor(fen)
+  for (const move of pv) {
+    if (turn === userColor) {
+      line.push(move)
+      if (line.length >= targetDepthPlies) break
+    }
+    turn = turn === 'white' ? 'black' : 'white'
+  }
+  return line
+}
+
+function puzzleFeedbackHtml(summary, fen, expectedLine, playedLine) {
+  const headline = summary.solved
+    ? `Solved the line: ${summary.matchedPrefixPlies}/${summary.targetDepthPlies}`
+    : `Matched ${summary.matchedPrefixPlies}/${summary.targetDepthPlies} best moves`
+  const detail = puzzleFeedbackDetail(summary.completionReason)
+  const expected = renderUciLine(fen, expectedLine)
+  const played = renderUciLine(fen, playedLine)
+  return `
+    <div class="puzzle-feedback-card">
+      <h3>Puzzle Tracking</h3>
+      <p class="puzzle-feedback-headline">${escapeHtml(headline)}</p>
+      <p class="puzzle-feedback-detail">${escapeHtml(detail)}</p>
+      ${expected ? `<p><strong>Target:</strong> ${escapeHtml(expected)}</p>` : ''}
+      ${played ? `<p><strong>Played:</strong> ${escapeHtml(played)}</p>` : ''}
+    </div>
+  `
+}
+
+function puzzleFeedbackDetail(reason) {
+  switch (reason) {
+    case 'solved':
+      return 'You matched the frozen top line for all tracked moves.'
+    case 'mismatch':
+      return 'The attempt was recorded when your move diverged from the top line.'
+    case 'restart':
+      return 'The attempt was recorded when you restarted the puzzle.'
+    case 'abandoned':
+      return 'The attempt was recorded when you left the puzzle.'
+    case 'completed':
+      return 'The attempt was recorded when you moved on.'
+    default:
+      return 'Signed-in puzzle performance is being tracked for this position.'
+  }
+}
+
+function renderUciLine(fen, line) {
+  if (!Array.isArray(line) || line.length === 0) return ''
+  const board = new Chess(fen)
+  const sanMoves = []
+  for (const uciMove of line) {
+    try {
+      const move = board.move({
+        from: uciMove.slice(0, 2),
+        to: uciMove.slice(2, 4),
+        promotion: uciMove[4] || undefined,
+      })
+      sanMoves.push(move?.san || uciMove)
+    } catch {
+      sanMoves.push(uciMove)
+    }
+  }
+  return sanMoves.join(' ')
 }

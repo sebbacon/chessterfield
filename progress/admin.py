@@ -10,6 +10,9 @@ class UserPositionStateAdmin(admin.ModelAdmin):
         "position",
         "status",
         "mastery_score",
+        "recent_accuracy_score",
+        "perfect_record",
+        "needs_homework",
         "best_score",
         "attempt_count",
         "viewed_at",
@@ -23,4 +26,3 @@ class PracticeAttemptAdmin(admin.ModelAdmin):
     list_display = ("user", "position", "mode", "result", "score_delta", "started_at", "finished_at")
     list_filter = ("mode", "result")
     search_fields = ("user__username", "position__name", "position__source")
-

@@ -35,6 +35,20 @@ describe('router state', () => {
     expect(state.library.viewed).toBe('viewed')
   })
 
+  it('preserves authenticated progress filters in library URLs', () => {
+    const state = mergeState(DEFAULT_STATE, {
+      library: {
+        mode: 'positions',
+        page: 1,
+        tags: [],
+        viewed: 'homework',
+      },
+    })
+
+    expect(buildUrlFromState(state)).toBe('/?viewed=homework')
+    expect(parseUrlState('/', '?viewed=perfect').library.viewed).toBe('perfect')
+  })
+
   it('builds a bookmarked play URL for a saved position', () => {
     const state = mergeState(DEFAULT_STATE, {
       view: 'play',

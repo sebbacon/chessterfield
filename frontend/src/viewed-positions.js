@@ -18,8 +18,8 @@ export function isViewedPositionRecord(position) {
   return isPositionViewed(position?.id)
 }
 
-export async function markPositionViewed(positionId) {
-  const session = getCachedSession()
+export async function markPositionViewed(positionId, sessionOverride = null) {
+  const session = sessionOverride || getCachedSession()
   if (session.authenticated) {
     try {
       return await updatePositionProgress(positionId, { viewed: true })
