@@ -22,6 +22,26 @@ def _csv_env(name: str, default: str) -> list[str]:
     return [item.strip() for item in value.split(',') if item.strip()]
 
 
+def _csrf_origin_for_host(host: str) -> str:
+    if '://' in host:
+        return host
+
+    if host.startswith('*.'):
+        return f'https://{host}'
+
+    if host.startswith('.'):
+        return f'https://*{host}'
+
+    if host.startswith('localhost') or host.startswith('127.0.0.1') or host.startswith('[::1]'):
+        return f'http://{host}'
+
+    return f'https://{host}'
+
+
+def _default_csrf_trusted_origins(allowed_hosts: list[str]) -> list[str]:
+    return [_csrf_origin_for_host(host) for host in allowed_hosts]
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
@@ -32,6 +52,10 @@ SECRET_KEY = 'django-insecure-p%&r)-sxldr-m9(+&+-rhd#+d7ff5g$oer4@z5*yge*b$&mb10
 DEBUG = os.environ.get('DEBUG', 'true').lower() == 'true'
 
 ALLOWED_HOSTS = _csv_env('ALLOWED_HOSTS', 'localhost,127.0.0.1,.sprites.app,.sprites.dev')
+CSRF_TRUSTED_ORIGINS = _csv_env(
+    'CSRF_TRUSTED_ORIGINS',
+    ','.join(_default_csrf_trusted_origins(ALLOWED_HOSTS)),
+)
 
 
 # Application definition
