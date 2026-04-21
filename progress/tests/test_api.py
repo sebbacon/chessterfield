@@ -61,6 +61,7 @@ def test_me_detail_for_authenticated_user(authed_client, user):
     assert payload['authenticated'] is True
     assert payload['user']['username'] == user.username
     assert payload['user']['settings']['preferred_side'] == 'auto'
+    assert payload['user']['settings']['engine_move_speed'] == 'standard'
 
 
 @pytest.mark.django_db
@@ -70,6 +71,7 @@ def test_patch_user_settings(authed_client, user):
         json.dumps({
             'preferred_side': 'black',
             'analysis_visibility': 'hidden',
+            'engine_move_speed': 'fast',
         }),
         content_type='application/json',
     )
@@ -78,6 +80,7 @@ def test_patch_user_settings(authed_client, user):
     user.refresh_from_db()
     assert user.settings.preferred_side == 'black'
     assert user.settings.analysis_visibility == 'hidden'
+    assert user.settings.engine_move_speed == 'fast'
 
 
 @pytest.mark.django_db
@@ -100,31 +103,22 @@ def test_patch_position_progress_marks_viewed_and_status(authed_client, user, po
 
 
 @pytest.mark.django_db
-def test_position_list_filters_by_viewed_progress(authed_client, user):
-    viewed = Position.objects.create(name='Viewed', fen=STARTING_FEN, notes='')
+def test_position_list_filters_by_not_started_progress(authed_client, user):
+    started = Position.objects.create(name='Started', fen=STARTING_FEN, notes='')
     fresh = Position.objects.create(name='Fresh', fen=STARTING_FEN, notes='')
     UserPositionState.objects.create(
         user=user,
-        position=viewed,
-        viewed_at=timezone.now(),
+        position=started,
+        last_played_at=timezone.now(),
         status=UserPositionState.Status.IN_PROGRESS,
     )
 
-    response = authed_client.get('/api/positions/?progress=viewed')
+    response = authed_client.get('/api/positions/?progress=not_started')
     payload = json.loads(response.content)
 
     assert response.status_code == 200
-    assert [row['name'] for row in payload['results']] == ['Viewed']
-    assert payload['results'][0]['user_state']['status'] == 'in_progress'
-    assert payload['results'][0]['score_summary']['attempt_count'] == 0
-    assert payload['results'][0]['score_summary']['mastery_score'] == 0
-    assert payload['results'][0]['score_summary']['recent_accuracy_score'] == 0
-    assert payload['results'][0]['score_summary']['current_perfect_streak'] == 0
-    assert payload['results'][0]['score_summary']['perfect_record'] is False
-    assert payload['results'][0]['score_summary']['needs_homework'] is True
-    assert payload['results'][0]['score_summary']['best_matched_prefix_plies'] == 0
-    assert payload['results'][0]['score_summary']['solved_count'] == 0
-    assert fresh.name not in {row['name'] for row in payload['results']}
+    assert [row['name'] for row in payload['results']] == ['Fresh']
+    assert started.name not in {row['name'] for row in payload['results']}
 
 
 @pytest.mark.django_db
@@ -167,7 +161,7 @@ def test_practice_attempt_lifecycle_updates_user_state(authed_client, user, posi
     assert attempt.matched_prefix_plies == 4
     assert attempt.expected_line == ['e2e4', 'g1f3', 'f1c4', 'd2d3']
     assert attempt.played_line == ['e2e4', 'g1f3', 'f1c4', 'd2d3']
-    assert state.status == UserPositionState.Status.COMPLETED
+    assert state.status == UserPositionState.Status.REVISION
     assert state.attempt_count == 1
     assert state.best_score == 4
     assert state.mastery_score == 84
@@ -261,20 +255,21 @@ def test_three_perfect_attempts_mark_position_mastered(authed_client, user, posi
     assert state.perfect_record is True
     assert state.needs_homework is False
 
-    response = authed_client.get('/api/positions/?progress=perfect')
+    response = authed_client.get('/api/positions/?progress=mastered')
     payload = json.loads(response.content)
     assert response.status_code == 200
     assert [row['id'] for row in payload['results']] == [position.id]
 
 
 @pytest.mark.django_db
-def test_position_list_filters_by_homework_flag(authed_client, user):
-    homework = Position.objects.create(name='Homework', fen=STARTING_FEN, notes='')
+def test_position_list_filters_by_revision_status(authed_client, user):
+    revision = Position.objects.create(name='Revision', fen=STARTING_FEN, notes='')
     mastered = Position.objects.create(name='Mastered', fen=STARTING_FEN, notes='')
     UserPositionState.objects.create(
         user=user,
-        position=homework,
-        status=UserPositionState.Status.IN_PROGRESS,
+        position=revision,
+        status=UserPositionState.Status.REVISION,
+        solved_count=1,
         mastery_score=48,
         needs_homework=True,
     )
@@ -287,11 +282,11 @@ def test_position_list_filters_by_homework_flag(authed_client, user):
         needs_homework=False,
     )
 
-    response = authed_client.get('/api/positions/?progress=homework')
+    response = authed_client.get('/api/positions/?progress=revision')
     payload = json.loads(response.content)
 
     assert response.status_code == 200
-    assert [row['name'] for row in payload['results']] == ['Homework']
+    assert [row['name'] for row in payload['results']] == ['Revision']
 
 
 @pytest.mark.django_db
@@ -327,4 +322,4 @@ def test_practice_attempt_counts_short_solution_as_solved(authed_client, user, p
     assert attempt.target_depth_plies == 2
     assert attempt.matched_prefix_plies == 2
     assert state.solved_count == 1
-    assert state.status == UserPositionState.Status.COMPLETED
+    assert state.status == UserPositionState.Status.REVISION

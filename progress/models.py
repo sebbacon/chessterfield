@@ -8,7 +8,7 @@ class UserPositionState(models.Model):
     class Status(models.TextChoices):
         NEW = "new", "New"
         IN_PROGRESS = "in_progress", "In progress"
-        COMPLETED = "completed", "Completed"
+        REVISION = "revision", "Revision"
         MASTERED = "mastered", "Mastered"
 
     user = models.ForeignKey(

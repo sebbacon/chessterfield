@@ -28,6 +28,7 @@ def _settings_to_dict(settings: UserSettings) -> dict:
     return {
         "preferred_side": settings.preferred_side,
         "analysis_visibility": settings.analysis_visibility,
+        "engine_move_speed": settings.engine_move_speed,
         "default_library_mode": settings.default_library_mode,
     }
 
@@ -72,6 +73,7 @@ def me_settings(request):
     allowed_fields = {
         "preferred_side": {choice for choice, _label in UserSettings.PreferredSide.choices},
         "analysis_visibility": {choice for choice, _label in UserSettings.AnalysisVisibility.choices},
+        "engine_move_speed": {choice for choice, _label in UserSettings.EngineMoveSpeed.choices},
         "default_library_mode": {choice for choice, _label in UserSettings.LibraryMode.choices},
     }
 

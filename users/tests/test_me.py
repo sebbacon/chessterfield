@@ -52,3 +52,20 @@ def test_me_settings_backfills_missing_settings(client):
     assert response.status_code == 200
     user.refresh_from_db()
     assert user.settings.preferred_side == "black"
+
+
+@pytest.mark.django_db
+def test_me_detail_includes_engine_move_speed(client):
+    user = get_user_model().objects.create_user(
+        username="engine-speed-player",
+        email="engine-speed@example.com",
+        password="password123",
+    )
+    settings = UserSettings.objects.create(user=user, engine_move_speed="fast")
+    client.force_login(user)
+
+    response = client.get("/api/me/")
+
+    assert response.status_code == 200
+    payload = json.loads(response.content)
+    assert payload["user"]["settings"]["engine_move_speed"] == settings.engine_move_speed

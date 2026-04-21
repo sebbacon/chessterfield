@@ -7,7 +7,7 @@ from django.views.decorators.http import require_http_methods
 
 from positions.models import Position
 from progress.models import PracticeAttempt
-from progress.services import finish_practice_attempt, start_practice_attempt
+from progress.services import finish_practice_attempt, serialize_position_state, start_practice_attempt
 
 from .modes import PRACTICE_MODES
 
@@ -92,22 +92,10 @@ def attempt_detail(request, pk: int):
                 "completed_normally": attempt.completed_normally,
                 "expected_line": attempt.expected_line,
                 "played_line": attempt.played_line,
+                "started_at": attempt.started_at.isoformat(),
                 "finished_at": attempt.finished_at.isoformat() if attempt.finished_at else None,
             },
-            "user_state": {
-                "status": state.status,
-                "attempt_count": state.attempt_count,
-                "best_score": state.best_score,
-                "last_score": state.last_score,
-                "mastery_score": state.mastery_score,
-                "recent_accuracy_score": state.recent_accuracy_score,
-                "current_perfect_streak": state.current_perfect_streak,
-                "perfect_record": state.perfect_record,
-                "needs_homework": state.needs_homework,
-                "best_matched_prefix_plies": state.best_matched_prefix_plies,
-                "last_matched_prefix_plies": state.last_matched_prefix_plies,
-                "solved_count": state.solved_count,
-            },
+            "user_state": serialize_position_state(state),
         }
     )
 

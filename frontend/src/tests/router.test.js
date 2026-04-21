@@ -18,21 +18,21 @@ describe('router state', () => {
         mode: 'positions',
         page: 3,
         tags: ['endgame', 'lichess'],
-        viewed: 'unviewed',
+        viewed: 'not_started',
       },
     })
 
-    expect(buildUrlFromState(state)).toBe('/tags/endgame+lichess/?page=3&viewed=unviewed')
+    expect(buildUrlFromState(state)).toBe('/tags/endgame+lichess/?page=3&progress=not_started')
   })
 
   it('parses a tagged library URL', () => {
-    const state = parseUrlState('/tags/endgame+lichess/', '?page=2&viewed=viewed')
+    const state = parseUrlState('/tags/endgame+lichess/', '?page=2&progress=revision')
 
     expect(state.view).toBe('library')
     expect(state.library.mode).toBe('positions')
     expect(state.library.page).toBe(2)
     expect(state.library.tags).toEqual(['endgame', 'lichess'])
-    expect(state.library.viewed).toBe('viewed')
+    expect(state.library.viewed).toBe('revision')
   })
 
   it('preserves authenticated progress filters in library URLs', () => {
@@ -41,12 +41,12 @@ describe('router state', () => {
         mode: 'positions',
         page: 1,
         tags: [],
-        viewed: 'homework',
+        viewed: 'mastered',
       },
     })
 
-    expect(buildUrlFromState(state)).toBe('/?viewed=homework')
-    expect(parseUrlState('/', '?viewed=perfect').library.viewed).toBe('perfect')
+    expect(buildUrlFromState(state)).toBe('/?progress=mastered')
+    expect(parseUrlState('/', '?progress=not_started').library.viewed).toBe('not_started')
   })
 
   it('builds a bookmarked play URL for a saved position', () => {
@@ -73,5 +73,15 @@ describe('router state', () => {
     })
 
     expect(buildUrlFromState(state)).toBe('/?view=play&item=9&ply=0&side=white')
+  })
+
+  it('parses and builds the settings route', () => {
+    expect(parseUrlState('/', '?view=settings').view).toBe('settings')
+
+    const state = mergeState(DEFAULT_STATE, {
+      view: 'settings',
+    })
+
+    expect(buildUrlFromState(state)).toBe('/?view=settings')
   })
 })

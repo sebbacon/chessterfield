@@ -16,10 +16,7 @@ class PositionFilters:
 def parse_position_filters(request) -> PositionFilters:
     from .common import clean_tag_filters
 
-    progress = normalize_progress_filter(request.GET.get("progress"))
-    viewed = request.GET.get("viewed")
-    if progress == "all" and viewed in {"viewed", "unviewed"}:
-        progress = viewed
+    progress = normalize_progress_filter(request.GET.get("progress") or request.GET.get("viewed"))
 
     return PositionFilters(
         tags=tuple(clean_tag_filters(request)),
@@ -30,8 +27,15 @@ def parse_position_filters(request) -> PositionFilters:
 
 
 def normalize_progress_filter(value: str | None) -> str:
-    allowed = {"all", "viewed", "unviewed", "in_progress", "completed", "mastered", "homework", "perfect"}
-    return value if value in allowed else "all"
+    aliases = {
+        "unviewed": "not_started",
+        "completed": "revision",
+        "homework": "revision",
+        "perfect": "mastered",
+    }
+    normalized = aliases.get(value, value)
+    allowed = {"all", "viewed", "started", "not_started", "in_progress", "revision", "mastered"}
+    return normalized if normalized in allowed else "all"
 
 
 def normalize_source_kind(value: str | None) -> str:
@@ -68,17 +72,18 @@ def apply_position_filters(queryset, filters: PositionFilters, user):
 
 def apply_progress_filter(queryset, progress: str, user):
     if not user.is_authenticated:
-        if progress == "unviewed":
+        if progress == "not_started":
             return queryset
         return queryset.none()
 
     state_qs = UserPositionState.objects.filter(user=user, position=OuterRef("pk"))
-    if progress == "viewed":
-        return queryset.annotate(has_state=Exists(state_qs.filter(viewed_at__isnull=False))).filter(has_state=True)
-    if progress == "unviewed":
-        return queryset.annotate(has_state=Exists(state_qs.filter(viewed_at__isnull=False))).filter(has_state=False)
-    if progress == "homework":
-        return queryset.filter(user_states__user=user, user_states__needs_homework=True)
-    if progress == "perfect":
-        return queryset.filter(user_states__user=user, user_states__perfect_record=True)
-    return queryset.filter(user_states__user=user, user_states__status=progress)
+    started_qs = state_qs.filter(last_played_at__isnull=False)
+    if progress in {"viewed", "started"}:
+        return queryset.annotate(has_started=Exists(started_qs)).filter(has_started=True)
+    if progress == "not_started":
+        return queryset.annotate(has_started=Exists(started_qs)).filter(has_started=False)
+    if progress == "in_progress":
+        return queryset.filter(user_states__user=user, user_states__last_played_at__isnull=False, user_states__solved_count=0)
+    if progress == "revision":
+        return queryset.filter(user_states__user=user, user_states__solved_count__gt=0, user_states__mastery_score__lt=85)
+    return queryset.filter(user_states__user=user, user_states__mastery_score__gte=85)

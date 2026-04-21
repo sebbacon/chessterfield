@@ -7,6 +7,7 @@ from .models import PracticeAttempt, UserPositionState
 RECENT_ATTEMPT_WINDOW = 5
 PERFECT_RECORD_MIN_ATTEMPTS = 3
 HOMEWORK_MASTERY_THRESHOLD = 85
+MASTERED_MASTERY_THRESHOLD = 85
 
 
 def serialize_position_state(state: UserPositionState | None) -> dict | None:
@@ -59,10 +60,13 @@ def update_position_state(user, position: Position, payload: dict) -> UserPositi
             state.viewed_at = timezone.now()
             updated_fields.append("viewed_at")
 
-    if "status" in payload and payload["status"] in UserPositionState.Status.values:
-        state.status = payload["status"]
+    requested_status = payload.get("status")
+    if requested_status == "completed":
+        requested_status = UserPositionState.Status.REVISION
+    if requested_status in UserPositionState.Status.values:
+        state.status = requested_status
         updated_fields.append("status")
-        if state.status in {UserPositionState.Status.COMPLETED, UserPositionState.Status.MASTERED}:
+        if state.status in {UserPositionState.Status.REVISION, UserPositionState.Status.MASTERED}:
             state.completed_at = state.completed_at or timezone.now()
             updated_fields.append("completed_at")
 
@@ -198,8 +202,7 @@ def apply_attempt_rollup(state: UserPositionState) -> None:
         state.needs_homework = True
         state.best_matched_prefix_plies = 0
         state.last_matched_prefix_plies = 0
-        if state.status != UserPositionState.Status.NEW:
-            state.status = UserPositionState.Status.IN_PROGRESS
+        state.status = UserPositionState.Status.NEW
         state.completed_at = None
         return
 
@@ -224,11 +227,11 @@ def apply_attempt_rollup(state: UserPositionState) -> None:
         not state.perfect_record
         and (state.attempt_count < PERFECT_RECORD_MIN_ATTEMPTS or state.mastery_score < HOMEWORK_MASTERY_THRESHOLD)
     )
-    if state.perfect_record:
+    if state.mastery_score >= MASTERED_MASTERY_THRESHOLD:
         state.status = UserPositionState.Status.MASTERED
         state.completed_at = state.completed_at or latest_solved_attempt.finished_at or timezone.now()
     elif state.solved_count > 0:
-        state.status = UserPositionState.Status.COMPLETED
+        state.status = UserPositionState.Status.REVISION
         state.completed_at = state.completed_at or latest_solved_attempt.finished_at or timezone.now()
     else:
         state.status = UserPositionState.Status.IN_PROGRESS

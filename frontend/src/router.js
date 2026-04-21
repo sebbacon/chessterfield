@@ -24,11 +24,11 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
   }
 
   const params = new URLSearchParams(search)
-  const view = ['library', 'import', 'play'].includes(params.get('view')) ? params.get('view') : 'library'
+  const view = ['library', 'import', 'play', 'settings'].includes(params.get('view')) ? params.get('view') : 'library'
 
   const mode = params.get('mode') === 'games' ? 'games' : 'positions'
   const page = clampPositiveInt(params.get('page'), 1)
-  const viewed = normalizeViewedFilter(params.get('viewed'))
+  const viewed = normalizeViewedFilter(params.get('progress') || params.get('viewed'))
   const queryTags = (params.get('tags') || '')
     .split(',')
     .map(t => t.trim())
@@ -67,7 +67,7 @@ export function buildUrlFromState(state) {
     if (state.library.mode === 'games') params.set('mode', 'games')
     if (state.library.page > 1) params.set('page', String(state.library.page))
     if (state.library.mode === 'positions' && state.library.viewed !== 'all') {
-      params.set('viewed', state.library.viewed)
+      params.set('progress', state.library.viewed)
     }
     if (state.library.mode !== 'positions' && state.library.tags.length > 0) {
       params.set('tags', state.library.tags.join(','))
@@ -140,13 +140,12 @@ function normalizeViewedFilter(value) {
 
 const PROGRESS_FILTER_VALUES = new Set([
   'all',
+  'not_started',
+  'in_progress',
+  'revision',
+  'mastered',
   'viewed',
   'unviewed',
-  'in_progress',
-  'completed',
-  'mastered',
-  'homework',
-  'perfect',
 ])
 
 function normalizePlaySide(value) {

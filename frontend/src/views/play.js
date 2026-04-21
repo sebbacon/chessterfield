@@ -2,8 +2,8 @@ import { Chess } from 'chess.js'
 import { Chessground } from 'chessground'
 import { fetchGame, fetchPosition } from '../api/content.js'
 import { createPracticeAttempt, finishPracticeAttempt } from '../api/practice.js'
-import { updateMySettings } from '../api/user.js'
 import { parseStockfishLine } from '../chess/eval.js'
+import { readUserSetting, writeUserSettings } from '../settings.js'
 import { markPositionViewed } from '../viewed-positions.js'
 import { ensureSession } from '../state/session.js'
 import EngineWorker from '../chess/worker.js?worker'
@@ -16,10 +16,13 @@ import 'chessground/assets/chessground.cburnett.css'
 let builtWorkerUrlPromise = null
 const ANALYSIS_MOVETIME_MS = 1200
 const HINT_MOVETIME_MS = 1000
-const ENGINE_MOVETIME_MS = 3000
 const ANALYSIS_VARIATIONS = 4
-const ANALYSIS_VISIBILITY_STORAGE_KEY = 'chessterfield:analysis-visibility:v1'
 const PUZZLE_TARGET_DEPTH_PLIES = 4
+const ENGINE_MOVE_SPEEDS = {
+  fast: { label: 'Fast (~1s)', movetimeMs: 1000 },
+  standard: { label: 'Standard (~3s)', movetimeMs: 3000 },
+  slow: { label: 'Slow (~5s)', movetimeMs: 5000 },
+}
 
 function isCrossOriginWorkerError(error) {
   return error instanceof DOMException && error.name === 'SecurityError'
@@ -96,6 +99,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   const nextPositionId = !isGame ? position.next_position_id : null
   const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || activeTagFilters.length > 0)
   const nextActionLabel = nextPositionId ? 'Next Position →' : 'Back to Library →'
+  const initialEngineMoveSpeed = normalizeEngineMoveSpeed(readUserSetting(session, 'engine_move_speed'))
 
   // --- Render layout ---
   app.innerHTML = `
@@ -114,6 +118,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
                 Seen
               </span>
             ` : ''}
+            <button id="settings-btn" class="btn-secondary" type="button">Settings</button>
             <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
             <button id="restart-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Restart</button>
             <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
@@ -161,6 +166,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
           <p class="fen-display">${escapeHtml(position.fen)}</p>
         </div>
+        <div id="practice-summary" class="practice-summary" hidden></div>
         <div id="puzzle-feedback" class="puzzle-feedback" hidden></div>
         <div class="side-selector" ${browseOnly ? 'hidden' : ''}>
           <p>Play as</p>
@@ -168,6 +174,13 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
             <button class="side-btn ${userColorClass(initialUserColor, 'white')}" data-side="white">White</button>
             <button class="side-btn ${userColorClass(initialUserColor, 'black')}" data-side="black">Black</button>
           </div>
+        </div>
+        <div class="engine-speed-control" ${browseOnly ? 'hidden' : ''}>
+          <label class="engine-speed-label" for="engine-speed-select">Engine speed</label>
+          <select id="engine-speed-select" class="engine-speed-select">
+            ${renderEngineMoveSpeedOptions(initialEngineMoveSpeed)}
+          </select>
+          <p class="engine-speed-help">Lower think time makes Stockfish reply quicker.</p>
         </div>
         <div id="engine-banner" class="engine-banner hidden">Engine unavailable — analysis disabled</div>
       </aside>
@@ -187,7 +200,8 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let pendingEngineGo = false
   let currentSearch = null
   let analysisByPly = new Map()
-  let analysisHidden = readAnalysisVisibilityPreference(session)
+  let analysisHidden = readUserSetting(session, 'analysis_visibility') === 'hidden'
+  let engineMoveSpeed = initialEngineMoveSpeed
   let positionHistory = initialHistory
   let viewIndex = positionHistory.length - 1  // which position in positionHistory is displayed
   let currentAttemptId = null
@@ -195,6 +209,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let pendingAttemptClose = null
   let puzzleState = createPuzzleState()
   let puzzleSummary = createPuzzleSummary(position)
+  let practiceSummary = createPracticeSummary(position)
+
+  renderPracticeSummary()
 
   // --- Worker setup ---
   try {
@@ -283,7 +300,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     renderAnalysisForPly(viewIndex)
     sendToEngine('stop')
     sendToEngine(`position fen ${chess.fen()}`)
-    sendToEngine(`go movetime ${ENGINE_MOVETIME_MS}`)
+    sendToEngine(`go movetime ${engineMoveSpeedConfig(engineMoveSpeed).movetimeMs}`)
   }
 
   function setDisplayedFen(fen) {
@@ -698,6 +715,15 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     writeAnalysisVisibilityPreference(analysisHidden, session)
     renderAnalysisForPly(viewIndex)
   })
+  app.querySelector('#settings-btn').addEventListener('click', () => navigate('settings'))
+  app.querySelector('#engine-speed-select')?.addEventListener('change', event => {
+    engineMoveSpeed = normalizeEngineMoveSpeed(event.target.value)
+    event.target.value = engineMoveSpeed
+    writeEngineMoveSpeedPreference(engineMoveSpeed, session)
+    if (workerReady && engineMoving && currentSearch?.kind === 'engineMove') {
+      requestEngineMove()
+    }
+  })
   app.querySelector('#analysis-lines').addEventListener('click', e => {
     const button = e.target.closest('.analysis-line-btn')
     if (!button || button.disabled || !canSelectAnalysisMove()) return
@@ -809,6 +835,8 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     }).then(payload => {
       currentAttemptId = payload.id
       puzzleState.targetDepthPlies = payload.target_depth_plies || puzzleState.targetDepthPlies
+      practiceSummary = mergePracticeSummary(practiceSummary, null, { startedAt: payload.started_at, started: true })
+      renderPracticeSummary()
       if (pendingAttemptClose) {
         const queuedPayload = pendingAttemptClose
         pendingAttemptClose = null
@@ -839,6 +867,8 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   function sendAttemptClose(payload) {
     void finishPracticeAttempt(currentAttemptId, payload).then(response => {
       puzzleSummary = mergePuzzleSummary(puzzleSummary, response.user_state)
+      practiceSummary = mergePracticeSummary(practiceSummary, response.user_state)
+      renderPracticeSummary()
       renderPuzzleFeedback({
         matchedPrefixPlies: response.attempt?.matched_prefix_plies ?? payload.matched_prefix_plies,
         targetDepthPlies: response.attempt?.target_depth_plies ?? payload.target_depth_plies,
@@ -999,6 +1029,13 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     }
     container.hidden = false
     container.innerHTML = puzzleFeedbackHtml(displaySummary)
+  }
+
+  function renderPracticeSummary() {
+    const container = app.querySelector('#practice-summary')
+    if (!container || browseOnly || !session.authenticated) return
+    container.hidden = false
+    container.innerHTML = practiceSummaryHtml(practiceSummary)
   }
 
   function hidePuzzleFeedback() {
@@ -1221,31 +1258,34 @@ function keepHistorySelectionVisible(container, currentMoveEl) {
   }
 }
 
-function readAnalysisVisibilityPreference(session) {
-  if (session.authenticated) {
-    return session.user.settings.analysis_visibility === 'hidden'
-  }
-  if (!hasLocalStorage()) return false
-  return window.localStorage.getItem(ANALYSIS_VISIBILITY_STORAGE_KEY) === 'hidden'
-}
-
 function writeAnalysisVisibilityPreference(hidden, session) {
-  if (session.authenticated) {
-    session.user.settings.analysis_visibility = hidden ? 'hidden' : 'visible'
-    void updateMySettings({ analysis_visibility: session.user.settings.analysis_visibility })
-    return
-  }
-  if (!hasLocalStorage()) return
-  window.localStorage.setItem(ANALYSIS_VISIBILITY_STORAGE_KEY, hidden ? 'hidden' : 'shown')
+  void writeUserSettings(session, {
+    analysis_visibility: hidden ? 'hidden' : 'visible',
+  })
 }
 
-function hasLocalStorage() {
-  return typeof window !== 'undefined' && window.localStorage
+function writeEngineMoveSpeedPreference(speed, session) {
+  const normalized = normalizeEngineMoveSpeed(speed)
+  void writeUserSettings(session, { engine_move_speed: normalized })
+}
+
+function normalizeEngineMoveSpeed(speed) {
+  return Object.prototype.hasOwnProperty.call(ENGINE_MOVE_SPEEDS, speed) ? speed : 'standard'
+}
+
+function engineMoveSpeedConfig(speed) {
+  return ENGINE_MOVE_SPEEDS[normalizeEngineMoveSpeed(speed)]
+}
+
+function renderEngineMoveSpeedOptions(selectedSpeed) {
+  const normalized = normalizeEngineMoveSpeed(selectedSpeed)
+  return Object.entries(ENGINE_MOVE_SPEEDS).map(([value, option]) => `
+    <option value="${escapeHtml(value)}" ${value === normalized ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+  `).join('')
 }
 
 function preferredSideFromSession(session) {
-  if (!session.authenticated) return null
-  const preferred = session.user.settings.preferred_side
+  const preferred = readUserSetting(session, 'preferred_side')
   return preferred === 'white' || preferred === 'black' ? preferred : null
 }
 
@@ -1303,6 +1343,50 @@ function mergePuzzleSummary(currentSummary, userState) {
   }
 }
 
+function createPracticeSummary(position) {
+  const userState = position?.user_state || {}
+  const scoreSummary = position?.score_summary || {}
+  const attemptCount = Number(userState.attempt_count ?? scoreSummary.attempt_count ?? 0)
+  const lastAttemptedAt = userState.last_played_at || null
+  const started = Boolean(lastAttemptedAt || attemptCount > 0)
+  return {
+    started,
+    attemptCount,
+    masteryScore: Number(userState.mastery_score ?? scoreSummary.mastery_score ?? 0),
+    lastAttemptedAt,
+    status: normalizePracticeStatus(userState.status, started),
+  }
+}
+
+function mergePracticeSummary(currentSummary, userState, options = {}) {
+  const nextSummary = {
+    ...currentSummary,
+  }
+
+  if (userState) {
+    const attemptCount = Number(userState.attempt_count ?? nextSummary.attemptCount ?? 0)
+    const lastAttemptedAt = userState.last_played_at ?? nextSummary.lastAttemptedAt ?? null
+    const started = Boolean(lastAttemptedAt || attemptCount > 0 || options.started)
+    nextSummary.attemptCount = attemptCount
+    nextSummary.masteryScore = Number(userState.mastery_score ?? nextSummary.masteryScore ?? 0)
+    nextSummary.lastAttemptedAt = lastAttemptedAt
+    nextSummary.started = started
+    nextSummary.status = normalizePracticeStatus(userState.status, started)
+    return nextSummary
+  }
+
+  const attemptCount = Number(options.attemptCount ?? nextSummary.attemptCount ?? 0)
+  const lastAttemptedAt = options.startedAt ?? nextSummary.lastAttemptedAt ?? null
+  const started = Boolean(options.started ?? nextSummary.started ?? lastAttemptedAt ?? attemptCount > 0)
+  return {
+    ...nextSummary,
+    attemptCount,
+    lastAttemptedAt,
+    started,
+    status: normalizePracticeStatus(nextSummary.status, started),
+  }
+}
+
 function moveToUci(move) {
   return `${move.from}${move.to}${move.promotion || ''}`
 }
@@ -1345,4 +1429,59 @@ function puzzleFeedbackHeadline(summary) {
     return `Solved the line: ${summary.matchedPrefixPlies}/${summary.targetDepthPlies}`
   }
   return `Matched ${summary.matchedPrefixPlies}/${summary.targetDepthPlies} best moves`
+}
+
+function practiceSummaryHtml(summary) {
+  return `
+    <div class="practice-summary-card">
+      <p class="practice-summary-label">Practice summary</p>
+      <p class="practice-summary-row">
+        <strong>Status:</strong> ${escapeHtml(practiceStatusLabel(summary.status, summary.started))}
+        <span aria-hidden="true"> · </span>
+        <strong>Mastery:</strong> ${escapeHtml(formatMasteryScore(summary.masteryScore))}
+      </p>
+      <p class="practice-summary-row">
+        <strong>Attempts:</strong> ${summary.attemptCount}
+        <span aria-hidden="true"> · </span>
+        <strong>Last attempted:</strong> ${summary.lastAttemptedAt ? `
+          <time datetime="${escapeHtml(summary.lastAttemptedAt)}">${escapeHtml(formatAttemptedAt(summary.lastAttemptedAt))}</time>
+        ` : 'Never'}
+      </p>
+    </div>
+  `
+}
+
+function normalizePracticeStatus(status, started = false) {
+  if (status === 'in_progress' || status === 'revision' || status === 'mastered') return status
+  return started ? 'in_progress' : 'new'
+}
+
+function practiceStatusLabel(status, started = false) {
+  switch (normalizePracticeStatus(status, started)) {
+    case 'in_progress':
+      return 'In progress'
+    case 'revision':
+      return 'Revision'
+    case 'mastered':
+      return 'Mastered'
+    default:
+      return 'Not started'
+  }
+}
+
+function formatMasteryScore(score) {
+  const numeric = Number(score)
+  return Number.isFinite(numeric) ? `${numeric}%` : '0%'
+}
+
+function formatAttemptedAt(value) {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Unknown'
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed)
 }

@@ -141,7 +141,7 @@ describe('Library view', () => {
     }, { replace: false })
   })
 
-  it('shows homework filters for signed-in users and queries the backend with them', async () => {
+  it('shows progress filters for signed-in users and queries the backend with them', async () => {
     vi.stubGlobal('fetch', vi.fn((url) => {
       if (url === '/api/me/') {
         return makeResponse({
@@ -151,9 +151,9 @@ describe('Library view', () => {
         })
       }
       if (url === '/api/tags/') return makeResponse([])
-      if (String(url).startsWith('/api/positions/?page=1&progress=homework')) {
+      if (String(url).startsWith('/api/positions/?page=1&progress=revision')) {
         return makeResponse({
-          results: [{ id: 3, name: 'Homework Position', fen: STARTING_FEN, tags: [] }],
+          results: [{ id: 3, name: 'Revision Position', fen: STARTING_FEN, tags: [], user_state: { last_played_at: '2026-03-21T10:00:00Z' } }],
           count: 1,
           page: 1,
           total_pages: 1,
@@ -173,15 +173,15 @@ describe('Library view', () => {
     await mountLibrary(app, navigate, {}, syncState)
 
     expect(app.querySelector('#viewed-section-title')?.textContent).toBe('Progress')
-    expect(app.textContent).toContain('Homework')
-    expect(app.textContent).toContain('Perfect record')
+    expect(app.textContent).toContain('Not started')
+    expect(app.textContent).toContain('Revision')
 
-    app.querySelector('input[name="viewed-filter"][value="homework"]').click()
+    app.querySelector('input[name="viewed-filter"][value="revision"]').click()
     await flush()
 
-    expect(app.textContent).toContain('Homework Position')
+    expect(app.textContent).toContain('Revision Position')
     expect(syncState).toHaveBeenCalledWith({
-      library: { mode: 'positions', page: 1, tags: [], viewed: 'homework' },
+      library: { mode: 'positions', page: 1, tags: [], viewed: 'revision' },
       play: { ply: null, side: null },
     }, { replace: false })
   })
@@ -200,5 +200,15 @@ describe('Library view', () => {
     expect(navigate).toHaveBeenCalledWith('play', 1, {
       play: { ply: 0, side: null },
     })
+  })
+
+  it('uses the saved default library mode for anonymous users', async () => {
+    window.localStorage.setItem('chessterfield:default-library-mode:v1', 'games')
+
+    await mountLibrary(app, navigate, {}, syncState)
+    await flush()
+
+    expect(app.querySelector('h1')?.textContent).toBe('Games')
+    expect(app.textContent).toContain('vs opponent (2026-03-20)')
   })
 })

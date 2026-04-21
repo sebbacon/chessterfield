@@ -2,6 +2,7 @@ import { fetchGames, fetchPositions, fetchTags } from '../api/content.js'
 import { ensureSession } from '../state/session.js'
 import { fenToMiniBoard } from '../chess/miniboard.js'
 import { buildUrlFromState } from '../router.js'
+import { readUserSetting } from '../settings.js'
 import { getViewedPositionIds, isViewedPositionRecord } from '../viewed-positions.js'
 
 export async function mountLibrary(app, navigate, initialState = {}, syncState = () => {}) {
@@ -46,6 +47,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
           </div>
           <div class="library-header-actions">
             <div class="account-pill" id="library-account">${accountLabel(session)}</div>
+            <button id="go-settings" class="btn-secondary" type="button">Settings</button>
             <button id="go-import" class="btn-primary">+ Import Position</button>
           </div>
         </div>
@@ -55,13 +57,14 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   `
 
   app.querySelector('#go-import').addEventListener('click', () => navigate('import'))
+  app.querySelector('#go-settings').addEventListener('click', () => navigate('settings'))
 
   const pages = {
     positions: { current: initialState.mode === 'positions' ? (initialState.page || 1) : 1, total: 1 },
     games: { current: initialState.mode === 'games' ? (initialState.page || 1) : 1, total: 1 },
   }
   let allTags = []
-  let mode = initialState.mode === 'games' ? 'games' : 'positions'
+  let mode = resolveInitialMode(initialState, session)
   let selectedTags = new Set(initialState.tags || [])
   let viewedFilter = normalizeViewedFilter(initialState.viewed, session.authenticated)
   let viewedPositionIds = getViewedPositionIds()
@@ -134,13 +137,10 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     const options = session.authenticated
       ? [
           ['all', 'All positions'],
-          ['viewed', 'Viewed'],
-          ['unviewed', 'Not viewed'],
+          ['not_started', 'Not started'],
           ['in_progress', 'In progress'],
-          ['completed', 'Completed'],
+          ['revision', 'Revision'],
           ['mastered', 'Mastered'],
-          ['homework', 'Homework'],
-          ['perfect', 'Perfect record'],
         ]
       : [
           ['all', 'All positions'],
@@ -261,6 +261,9 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
 
   function positionCardHtml(p) {
     const viewed = session.authenticated ? isViewedPositionRecord(p) : viewedPositionIds.has(String(p.id))
+    const statusLabel = session.authenticated
+      ? (viewed ? 'Started' : 'Not started')
+      : (viewed ? 'Viewed on this device' : 'Not viewed on this device')
     const href = buildUrlFromState({
       view: 'play',
       itemId: p.id,
@@ -278,8 +281,8 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
           <span
             class="position-status-indicator ${viewed ? 'viewed' : 'unviewed'}"
             role="img"
-            aria-label="${viewed ? 'Viewed on this device' : 'Not viewed on this device'}"
-            title="${viewed ? 'Viewed on this device' : 'Not viewed on this device'}"
+            aria-label="${statusLabel}"
+            title="${statusLabel}"
           ></span>
           ${fenToMiniBoard(p.fen)}
         </div>
@@ -442,6 +445,9 @@ function viewedFilterToProgress(viewedFilter) {
 }
 
 function emptyPositionsMessage(viewedFilter) {
+  if (viewedFilter === 'not_started') {
+    return 'No not-started positions match these filters.'
+  }
   if (viewedFilter === 'viewed') {
     return 'No viewed positions match these filters yet.'
   }
@@ -451,17 +457,11 @@ function emptyPositionsMessage(viewedFilter) {
   if (viewedFilter === 'in_progress') {
     return 'No in-progress positions match these filters.'
   }
-  if (viewedFilter === 'completed') {
-    return 'No completed positions match these filters.'
+  if (viewedFilter === 'revision') {
+    return 'No revision positions match these filters.'
   }
   if (viewedFilter === 'mastered') {
     return 'No mastered positions match these filters.'
-  }
-  if (viewedFilter === 'homework') {
-    return 'No homework positions match these filters.'
-  }
-  if (viewedFilter === 'perfect') {
-    return 'No perfect-record positions match these filters.'
   }
   return 'No positions yet. Import one!'
 }
@@ -470,13 +470,10 @@ const ANONYMOUS_PROGRESS_FILTERS = new Set(['all', 'viewed', 'unviewed'])
 
 const AUTHENTICATED_PROGRESS_FILTERS = new Set([
   'all',
-  'viewed',
-  'unviewed',
+  'not_started',
   'in_progress',
-  'completed',
+  'revision',
   'mastered',
-  'homework',
-  'perfect',
 ])
 
 function capitalize(str) {
@@ -510,6 +507,16 @@ function accountLabel(session) {
     return `${escapeHtml(session.user.display_name)} <a class="account-link account-link-secondary" href="/accounts/logout/">Sign out</a>`
   }
   return '<a class="account-link account-link-secondary" href="/accounts/login/">Sign in</a> <a class="account-link account-link-primary" href="/accounts/signup/">Create account</a>'
+}
+
+function resolveInitialMode(initialState, session) {
+  if (typeof window !== 'undefined') {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('mode') === 'games') return 'games'
+    if (window.location.pathname.startsWith('/tags/')) return 'positions'
+  }
+  if (initialState.mode === 'games') return 'games'
+  return readUserSetting(session, 'default_library_mode')
 }
 
 function getMobileQuery() {

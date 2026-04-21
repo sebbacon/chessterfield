@@ -11,8 +11,8 @@ class UserProfileAdmin(admin.ModelAdmin):
 
 @admin.register(UserSettings)
 class UserSettingsAdmin(admin.ModelAdmin):
-    list_display = ("user", "preferred_side", "analysis_visibility", "default_library_mode")
-    list_filter = ("preferred_side", "analysis_visibility", "default_library_mode")
+    list_display = ("user", "preferred_side", "analysis_visibility", "engine_move_speed", "default_library_mode")
+    list_filter = ("preferred_side", "analysis_visibility", "engine_move_speed", "default_library_mode")
     search_fields = ("user__username",)
 
 

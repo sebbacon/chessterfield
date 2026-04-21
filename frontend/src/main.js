@@ -4,6 +4,7 @@ import { buildUrlFromState, DEFAULT_STATE, mergeState, parseUrlState } from './r
 import { mountLibrary } from './views/library.js'
 import { mountImport } from './views/import.js'
 import { mountPlay } from './views/play.js'
+import { mountSettings } from './views/settings.js'
 
 const app = document.getElementById('app')
 
@@ -44,6 +45,9 @@ function renderView() {
       break
     case 'play':
       p = mountPlay(app, navigate, state.itemId, state.play, syncState, state.library)
+      break
+    case 'settings':
+      p = mountSettings(app, navigate)
       break
     default:
       p = mountLibrary(app, navigate, state.library, syncState)

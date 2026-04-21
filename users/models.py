@@ -30,6 +30,11 @@ class UserSettings(models.Model):
         VISIBLE = "visible", "Visible"
         HIDDEN = "hidden", "Hidden"
 
+    class EngineMoveSpeed(models.TextChoices):
+        FAST = "fast", "Fast"
+        STANDARD = "standard", "Standard"
+        SLOW = "slow", "Slow"
+
     class LibraryMode(models.TextChoices):
         POSITIONS = "positions", "Positions"
         GAMES = "games", "Games"
@@ -48,6 +53,11 @@ class UserSettings(models.Model):
         max_length=10,
         choices=AnalysisVisibility.choices,
         default=AnalysisVisibility.VISIBLE,
+    )
+    engine_move_speed = models.CharField(
+        max_length=10,
+        choices=EngineMoveSpeed.choices,
+        default=EngineMoveSpeed.STANDARD,
     )
     default_library_mode = models.CharField(
         max_length=10,

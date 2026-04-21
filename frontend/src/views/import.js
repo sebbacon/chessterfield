@@ -11,7 +11,10 @@ export async function mountImport(app, navigate) {
         <div class="import-header">
           <button id="go-back" class="btn-secondary">← Library</button>
           <h1>Import Position</h1>
-          <div class="account-pill">${accountLabel(session)}</div>
+          <div class="import-header-actions">
+            <div class="account-pill">${accountLabel(session)}</div>
+            <button id="go-settings" class="btn-secondary" type="button">Settings</button>
+          </div>
         </div>
         <form id="import-form">
           <label>
@@ -45,6 +48,7 @@ export async function mountImport(app, navigate) {
   `
 
   app.querySelector('#go-back').addEventListener('click', () => navigate('library'))
+  app.querySelector('#go-settings').addEventListener('click', () => navigate('settings'))
 
   // Tag picker
   let existingTags = []

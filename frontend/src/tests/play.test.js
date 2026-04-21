@@ -110,6 +110,23 @@ describe('Play view game loop', () => {
     expect(sentCmds).toContain('go movetime 3000')
   })
 
+  it('uses the selected engine speed for engine moves and persists it locally', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    const speedSelect = app.querySelector('#engine-speed-select')
+    expect(speedSelect?.value).toBe('standard')
+
+    speedSelect.value = 'fast'
+    speedSelect.dispatchEvent(new Event('change', { bubbles: true }))
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+
+    const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
+    expect(sentCmds).toContain('go movetime 1000')
+    expect(window.localStorage.getItem('chessterfield:engine-move-speed:v1')).toBe('fast')
+  })
+
   it('applies engine bestmove to the board after user move', async () => {
     await mountPlay(app, navigate, 1, {}, syncState)
     cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
@@ -335,6 +352,15 @@ describe('Play view game loop', () => {
     expect(activeSide?.dataset.side).toBe('black')
   })
 
+  it('uses the anonymous preferred-side setting when present', async () => {
+    window.localStorage.setItem('chessterfield:preferred-side:v1', 'black')
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    const activeSide = app.querySelector('.side-btn.active')
+    expect(activeSide?.dataset.side).toBe('black')
+  })
+
   it('shows a load error instead of crashing on an invalid position FEN', async () => {
     mockPosition('8/8/8/8/8/8/8/8 w - - 0 1')
 
@@ -476,6 +502,86 @@ describe('Play view game loop', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith('/api/practice/attempts/'))).toBe(false)
   })
 
+  it('loads engine speed from signed-in settings and persists changes through the settings API', async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                engine_move_speed: 'slow',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            name: 'Puzzle',
+            fen: STARTING_FEN,
+            notes: '',
+            tags: [],
+            next_position_id: null,
+            user_state: {
+              status: 'revision',
+              last_played_at: '2026-04-19T10:00:00Z',
+              mastery_score: 72,
+              attempt_count: 3,
+            },
+            score_summary: {
+              mastery_score: 72,
+              attempt_count: 3,
+            },
+          }),
+        })
+      }
+      if (url === '/api/progress/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ user_state: { viewed_at: '2026-04-19T10:00:00Z' } }),
+        })
+      }
+      if (url === '/api/me/settings/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ settings: { engine_move_speed: 'fast' } }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Practice summary')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Status:')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Revision')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Mastery:')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('72%')
+
+    const speedSelect = app.querySelector('#engine-speed-select')
+    expect(speedSelect?.value).toBe('slow')
+
+    speedSelect.value = 'fast'
+    speedSelect.dispatchEvent(new Event('change', { bubbles: true }))
+    await flush()
+
+    const settingsCall = fetchMock.mock.calls.find(([url]) => url === '/api/me/settings/')
+    expect(settingsCall).toBeTruthy()
+    expect(JSON.parse(settingsCall[1].body)).toEqual({ engine_move_speed: 'fast' })
+  })
+
   it('records a signed-in solved puzzle against the frozen best line', async () => {
     const fetchMock = vi.fn((url, options) => {
       if (url === '/api/me/') {
@@ -490,6 +596,7 @@ describe('Play view game loop', () => {
               settings: {
                 preferred_side: 'auto',
                 analysis_visibility: 'visible',
+                engine_move_speed: 'slow',
                 default_library_mode: 'positions',
               },
             },
@@ -543,7 +650,9 @@ describe('Play view game loop', () => {
               finished_at: '2026-04-19T10:05:00Z',
             },
             user_state: {
-              status: 'completed',
+              status: 'revision',
+              mastery_score: 41,
+              last_played_at: '2026-04-19T10:05:00Z',
               attempt_count: 1,
               best_score: 4,
               last_score: 4,
@@ -599,6 +708,10 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('1')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved the line: 4/4')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Puzzle record')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Status:')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Revision')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('Mastery:')
+    expect(app.querySelector('#practice-summary')?.textContent).toContain('41%')
     expect(app.querySelector('#puzzle-feedback')?.textContent).not.toContain('Target:')
     expect(app.querySelector('#puzzle-feedback')?.textContent).not.toContain('Puzzle Tracking')
   })
@@ -617,6 +730,7 @@ describe('Play view game loop', () => {
               settings: {
                 preferred_side: 'auto',
                 analysis_visibility: 'visible',
+                engine_move_speed: 'standard',
                 default_library_mode: 'positions',
               },
             },
@@ -670,7 +784,7 @@ describe('Play view game loop', () => {
               finished_at: '2026-04-19T10:05:00Z',
             },
             user_state: {
-              status: 'completed',
+              status: 'revision',
               attempt_count: 1,
               best_score: 2,
               last_score: 2,
