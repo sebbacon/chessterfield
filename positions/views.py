@@ -49,11 +49,18 @@ def positions_detail(request, pk):
             data = json.loads(request.body)
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON'}, status=400)
+        update_fields = []
         if 'name' in data:
             pos.name = data['name']
+            update_fields.append('name')
         if 'notes' in data:
             pos.notes = data['notes']
-        pos.save()
+            update_fields.append('notes')
+        if 'possible_bug' in data:
+            pos.possible_bug = bool(data['possible_bug'])
+            update_fields.append('possible_bug')
+        if update_fields:
+            pos.save(update_fields=sorted(set(update_fields)))
         if 'tags' in data:
             apply_tags(pos, data['tags'])
         return JsonResponse(get_position_detail(request=request, position=pos, filters=parse_position_filters(request)))

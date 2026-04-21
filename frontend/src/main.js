@@ -5,6 +5,7 @@ import { mountLibrary } from './views/library.js'
 import { mountImport } from './views/import.js'
 import { mountPlay } from './views/play.js'
 import { mountSettings } from './views/settings.js'
+import { mountWorkout } from './views/workout.js'
 
 const app = document.getElementById('app')
 
@@ -37,20 +38,26 @@ function updateState(partial, { replace = false, render = true } = {}) {
 function renderView() {
   let p
   switch (state.view) {
-    case 'library':
+    case 'browse':
       p = mountLibrary(app, navigate, state.library, syncState)
+      break
+    case 'workout':
+      p = mountWorkout(app, navigate, state.workout)
       break
     case 'import':
       p = mountImport(app, navigate)
       break
     case 'play':
-      p = mountPlay(app, navigate, state.itemId, state.play, syncState, state.library)
+      p = mountPlay(app, navigate, state.itemId, state.play, syncState, {
+        browse: state.library,
+        workout: state.workout,
+      })
       break
     case 'settings':
       p = mountSettings(app, navigate)
       break
     default:
-      p = mountLibrary(app, navigate, state.library, syncState)
+      p = mountWorkout(app, navigate, state.workout)
   }
   if (p && typeof p.catch === 'function') {
     p.catch(err => console.error('View mount failed:', err))

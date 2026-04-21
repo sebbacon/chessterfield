@@ -1,6 +1,6 @@
 import { Chess } from 'chess.js'
 import { Chessground } from 'chessground'
-import { fetchGame, fetchPosition } from '../api/content.js'
+import { fetchGame, fetchPosition, updatePosition } from '../api/content.js'
 import { createPracticeAttempt, finishPracticeAttempt } from '../api/practice.js'
 import { parseStockfishLine } from '../chess/eval.js'
 import { readUserSetting, writeUserSettings } from '../settings.js'
@@ -63,22 +63,37 @@ async function createEngineWorker() {
   }
 }
 
-export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}, libraryState = {}) {
+export async function mountPlay(app, navigate, itemId, initialPlayState = {}, syncState = () => {}, contextState = {}) {
   const session = await ensureSession()
   // --- Fetch position or game-end data ---
   let position
   const isGame = typeof itemId === 'string' && itemId.startsWith('game:')
-  const activeTagFilters = !isGame && libraryState.mode === 'positions'
-    ? normalizeTagFilters(libraryState.tags)
-    : []
+  const browseState = contextState.browse || contextState || {}
+  const workoutState = contextState.workout || {}
+  const positionContext = isGame
+    ? { tags: [], progress: 'all', sort: 'oldest', tactic: null }
+    : resolvePositionContext({
+        session,
+        playState: initialPlayState,
+        browseState,
+        workoutState,
+      })
   let browseOnly = isGame
   let initialHistory = null
   let initialUserColor = normalizePlaySide(initialPlayState.side) || preferredSideFromSession(session)
   const resourceId = isGame ? itemId.slice(5) : itemId
+  const returnView = initialPlayState.from === 'workout' ? 'workout' : 'browse'
   try {
     const data = isGame
       ? await fetchGame(resourceId)
-      : await fetchPosition(resourceId, { tags: activeTagFilters })
+      : await fetchPosition(resourceId, positionContext)
+    if (!isGame && initialPlayState.from === 'workout' && !isFenPlayable(data.fen) && data.next_position_id) {
+      navigate('play', data.next_position_id, {
+        workout: workoutState,
+        play: { ply: 0, side: null, from: 'workout' },
+      }, { replace: true })
+      return
+    }
     if (isGame) {
       position = gameToPlayablePosition(data)
       initialHistory = gameToPositionHistory(data)
@@ -91,14 +106,16 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     validatePlayablePosition(position, initialHistory)
   } catch {
     app.innerHTML = `<p class="muted" style="padding:2rem">${isGame ? 'Game' : 'Position'} could not be loaded. <button id="back" class="btn-secondary">Back</button></p>`
-    app.querySelector('#back').addEventListener('click', () => navigate('library'))
+    app.querySelector('#back').addEventListener('click', () => navigate(returnView))
     return
   }
 
   const viewedStatus = !isGame ? await markPositionViewed(position.id, session) : null
   const nextPositionId = !isGame ? position.next_position_id : null
-  const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || activeTagFilters.length > 0)
-  const nextActionLabel = nextPositionId ? 'Next Position →' : 'Back to Library →'
+  const hasSequenceContext = !isGame && hasPositionSequenceContext(positionContext)
+  const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || hasSequenceContext)
+  const nextActionLabel = nextPositionId ? 'Next Position →' : `Back to ${capitalize(returnView)} →`
+  const backButtonLabel = returnView === 'workout' ? '← Workout' : '← Browse'
   const initialEngineMoveSpeed = normalizeEngineMoveSpeed(readUserSetting(session, 'engine_move_speed'))
 
   // --- Render layout ---
@@ -107,7 +124,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       <main class="play-main">
         <div class="play-topbar">
           <div class="play-topbar-nav">
-            <button id="back-btn" class="btn-secondary">← Library</button>
+            <button id="back-btn" class="btn-secondary">${backButtonLabel}</button>
             ${canAdvanceToNextPosition ? `<button id="next-position-btn" class="btn-secondary">${nextActionLabel}</button>` : ''}
           </div>
           <div class="play-topbar-actions">
@@ -165,6 +182,19 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           <h2>${escapeHtml(position.name)}</h2>
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
           <p class="fen-display">${escapeHtml(position.fen)}</p>
+          ${!isGame ? `
+            <div class="position-review-actions">
+              <button
+                id="flag-position-btn"
+                class="btn-secondary position-review-btn"
+                type="button"
+                ${position.possible_bug ? 'disabled' : ''}
+              >
+                ${position.possible_bug ? 'Flagged for review' : 'Problem? Flag this position for review'}
+              </button>
+              <span id="flag-position-status" class="position-review-status" aria-live="polite"></span>
+            </div>
+          ` : ''}
         </div>
         <div id="practice-summary" class="practice-summary" hidden></div>
         <div id="puzzle-feedback" class="puzzle-feedback" hidden></div>
@@ -716,6 +746,21 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     renderAnalysisForPly(viewIndex)
   })
   app.querySelector('#settings-btn').addEventListener('click', () => navigate('settings'))
+  app.querySelector('#flag-position-btn')?.addEventListener('click', async event => {
+    const button = event.currentTarget
+    const statusEl = app.querySelector('#flag-position-status')
+    button.disabled = true
+    statusEl.textContent = 'Flagging...'
+
+    try {
+      position = await updatePosition(position.id, { possible_bug: true })
+      button.textContent = 'Flagged for review'
+      statusEl.textContent = 'Saved'
+    } catch {
+      button.disabled = false
+      statusEl.textContent = 'Could not save'
+    }
+  })
   app.querySelector('#engine-speed-select')?.addEventListener('change', event => {
     engineMoveSpeed = normalizeEngineMoveSpeed(event.target.value)
     event.target.value = engineMoveSpeed
@@ -744,11 +789,14 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     teardownWorker()
     if (nextPositionId) {
       navigate('play', nextPositionId, {
-        play: { ply: 0, side: null },
+        play: { ply: 0, side: null, from: returnView },
+        workout: workoutState,
       })
       return
     }
-    navigate('library')
+    navigate(returnView, null, {
+      workout: workoutState,
+    })
   }
 
   // --- Resign ---
@@ -760,7 +808,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!browseOnly) startGame({ replaceUrl: true })
   })
 
-  app.querySelector('#back-btn').addEventListener('click', () => { closeActiveAttempt('abandoned', { completionReason: 'abandoned' }); teardownWorker(); navigate('library') })
+  app.querySelector('#back-btn').addEventListener('click', () => {
+    closeActiveAttempt('abandoned', { completionReason: 'abandoned' })
+    teardownWorker()
+    navigate(returnView, null, { workout: workoutState })
+  })
   app.querySelector('#next-position-btn')?.addEventListener('click', goToNextPositionOrLibrary)
 
   // --- Result panel buttons ---
@@ -1231,11 +1283,51 @@ function validateFen(fen) {
   new Chess(fen)
 }
 
-function buildPositionResourceUrl(positionId, tagFilters) {
-  const params = new URLSearchParams()
-  tagFilters.forEach(tag => params.append('tag', tag))
-  const query = params.toString()
-  return `/api/positions/${positionId}/${query ? `?${query}` : ''}`
+function isFenPlayable(fen) {
+  try {
+    validateFen(fen)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolvePositionContext({ session, playState = {}, browseState = {}, workoutState = {} }) {
+  if (playState.from === 'workout') {
+    return {
+      tags: [],
+      progress: 'all',
+      sort: session.authenticated ? 'workout' : 'oldest',
+      tactic: normalizeWorkoutTactic(workoutState.tactic),
+    }
+  }
+
+  return {
+    tags: browseState.mode === 'positions' ? normalizeTagFilters(browseState.tags) : [],
+    progress: session.authenticated ? normalizeBrowseProgress(browseState.viewed) : 'all',
+    sort: 'oldest',
+    tactic: null,
+  }
+}
+
+function hasPositionSequenceContext(positionContext) {
+  return positionContext.tags.length > 0
+    || positionContext.progress !== 'all'
+    || positionContext.sort === 'workout'
+    || Boolean(positionContext.tactic)
+}
+
+function normalizeBrowseProgress(value) {
+  return ['not_started', 'in_progress', 'revision', 'mastered'].includes(value) ? value : 'all'
+}
+
+function normalizeWorkoutTactic(value) {
+  const normalized = String(value || '').trim()
+  return normalized || 'all'
+}
+
+function capitalize(value) {
+  return String(value).charAt(0).toUpperCase() + String(value).slice(1)
 }
 
 function keepHistorySelectionVisible(container, currentMoveEl) {

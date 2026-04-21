@@ -76,6 +76,7 @@ def test_list_positions_returns_positions(client, position):
     assert data['count'] == 1
     assert data['results'][0]['name'] == 'Starting Position'
     assert data['results'][0]['fen'] == 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
+    assert data['results'][0]['possible_bug'] is False
     assert data['results'][0]['tags'] == []
 
 
@@ -146,6 +147,7 @@ def test_get_position(client, position):
     data = json.loads(r.content)
     assert data['id'] == position.id
     assert data['name'] == 'Starting Position'
+    assert data['possible_bug'] is False
     assert data['next_position_id'] is None
 
 
@@ -205,7 +207,7 @@ def test_get_position_skips_invalid_fen_when_computing_next_position_id(client):
         fen='rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
     )
     time.sleep(0.01)
-    Position.objects.create(
+    broken = Position.objects.create(
         name='Broken',
         fen='8/8/8/8/8/8/8/8 w - - 0 1',
     )
@@ -218,7 +220,30 @@ def test_get_position_skips_invalid_fen_when_computing_next_position_id(client):
     r = client.get(f'/api/positions/{first.id}/')
     data = json.loads(r.content)
 
+    broken.refresh_from_db()
     assert data['next_position_id'] == third.id
+    assert broken.possible_bug is True
+
+
+@pytest.mark.django_db
+def test_get_invalid_position_flags_possible_bug(client):
+    broken = Position.objects.create(
+        name='Broken',
+        fen='8/8/8/8/8/8/6r1/1Q1K3n w - - 0 1',
+    )
+    valid = Position.objects.create(
+        name='Next Valid',
+        fen='rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    )
+
+    r = client.get(f'/api/positions/{broken.id}/')
+    data = json.loads(r.content)
+
+    broken.refresh_from_db()
+    assert r.status_code == 200
+    assert data['possible_bug'] is True
+    assert data['next_position_id'] == valid.id
+    assert broken.possible_bug is True
 
 
 @pytest.mark.django_db
@@ -235,6 +260,20 @@ def test_patch_position_name(client, position):
     assert r.status_code == 200
     position.refresh_from_db()
     assert position.name == 'Renamed'
+
+
+@pytest.mark.django_db
+def test_patch_position_possible_bug(client, position):
+    r = client.patch(
+        f'/api/positions/{position.id}/',
+        json.dumps({'possible_bug': True}),
+        content_type='application/json',
+    )
+    assert r.status_code == 200
+    data = json.loads(r.content)
+    position.refresh_from_db()
+    assert position.possible_bug is True
+    assert data['possible_bug'] is True
 
 
 @pytest.mark.django_db

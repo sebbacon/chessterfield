@@ -57,6 +57,6 @@ describe('Import view', () => {
       notes: '',
       tags: ['stage3'],
     })
-    expect(navigate).toHaveBeenCalledWith('library')
+    expect(navigate).toHaveBeenCalledWith('browse')
   })
 })

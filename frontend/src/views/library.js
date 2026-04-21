@@ -34,6 +34,10 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
       <main class="library-main">
         <div class="library-header">
           <div class="library-header-main">
+            <div class="section-switcher">
+              <button id="go-workout" class="btn-secondary section-switcher-btn" type="button">Workout</button>
+              <button id="go-browse" class="btn-secondary section-switcher-btn active" type="button" aria-current="page">Browse</button>
+            </div>
             <button
               id="library-nav-toggle"
               class="btn-secondary nav-toggle"
@@ -43,7 +47,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
             >
               Browse & Filters
             </button>
-            <h1 id="library-title">Positions</h1>
+            <h1 id="library-title">Browse Positions</h1>
           </div>
           <div class="library-header-actions">
             <div class="account-pill" id="library-account">${accountLabel(session)}</div>
@@ -56,6 +60,8 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
     </div>
   `
 
+  app.querySelector('#go-workout').addEventListener('click', () => navigate('workout'))
+  app.querySelector('#go-browse').addEventListener('click', () => {})
   app.querySelector('#go-import').addEventListener('click', () => navigate('import'))
   app.querySelector('#go-settings').addEventListener('click', () => navigate('settings'))
 
@@ -125,7 +131,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
 
     positionsBtn.classList.toggle('active', mode === 'positions')
     gamesBtn.classList.toggle('active', mode === 'games')
-    title.textContent = mode === 'positions' ? 'Positions' : 'Games'
+    title.textContent = mode === 'positions' ? 'Browse Positions' : 'Browse Games'
     importBtn.hidden = mode !== 'positions'
     viewedSection.hidden = mode !== 'positions'
     viewedSectionTitle.textContent = session.authenticated ? 'Progress' : 'Viewed'
@@ -273,7 +279,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
         tags: [...selectedTags],
         viewed: viewedFilter,
       },
-      play: { ply: 0, side: null },
+      play: { ply: 0, side: null, from: 'browse' },
     })
     return `
       <a class="position-card position-card-link" data-id="${p.id}" href="${escapeHtml(href)}">
@@ -314,7 +320,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
       card.addEventListener('click', event => {
         event.preventDefault()
         navigate('play', parseInt(card.dataset.id, 10), {
-          play: { ply: 0, side: null },
+          play: { ply: 0, side: null, from: 'browse' },
         })
       })
     })
@@ -323,7 +329,7 @@ export async function mountLibrary(app, navigate, initialState = {}, syncState =
   function bindOpenGameButtons(container) {
     container.querySelectorAll('.open-game-btn').forEach(btn => {
       btn.addEventListener('click', () => navigate('play', `game:${btn.dataset.id}`, {
-        play: { ply: null, side: 'white' },
+        play: { ply: null, side: 'white', from: 'browse' },
       }))
     })
   }

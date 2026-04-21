@@ -1,5 +1,5 @@
 export const DEFAULT_STATE = {
-  view: 'library',
+  view: 'workout',
   itemId: null,
   library: {
     mode: 'positions',
@@ -7,9 +7,13 @@ export const DEFAULT_STATE = {
     tags: [],
     viewed: 'all',
   },
+  workout: {
+    tactic: 'all',
+  },
   play: {
     ply: null,
     side: null,
+    from: 'browse',
   },
 }
 
@@ -24,7 +28,19 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
   }
 
   const params = new URLSearchParams(search)
-  const view = ['library', 'import', 'play', 'settings'].includes(params.get('view')) ? params.get('view') : 'library'
+  const explicitView = params.get('view')
+  const legacyOrSupportedView = explicitView === 'library'
+    ? 'browse'
+    : ['browse', 'workout', 'import', 'play', 'settings'].includes(explicitView)
+      ? explicitView
+      : null
+  const inferredBrowse = pathname.startsWith(TAG_PATH_PREFIX)
+    || params.has('mode')
+    || params.has('page')
+    || params.has('progress')
+    || params.has('viewed')
+    || params.has('tags')
+  const view = legacyOrSupportedView || (inferredBrowse ? 'browse' : 'workout')
 
   const mode = params.get('mode') === 'games' ? 'games' : 'positions'
   const page = clampPositiveInt(params.get('page'), 1)
@@ -39,6 +55,8 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
   const item = params.get('item')
   const ply = params.get('ply')
   const side = normalizePlaySide(params.get('side'))
+  const from = normalizePlayOrigin(params.get('from'))
+  const tactic = normalizeWorkoutTactic(params.get('tactic'))
 
   return {
     view,
@@ -49,9 +67,13 @@ export function parseUrlState(pathname = window.location.pathname, search = wind
       tags,
       viewed,
     },
+    workout: {
+      tactic,
+    },
     play: {
       ply: ply === null ? null : clampPositiveInt(ply, null),
       side,
+      from,
     },
   }
 }
@@ -61,9 +83,9 @@ export function buildUrlFromState(state) {
   const url = new URL(buildBasePath(state), window.location.origin)
   const params = url.searchParams
 
-  if (state.view !== 'library') params.set('view', state.view)
+  if (state.view !== 'workout') params.set('view', state.view)
 
-  if (state.view === 'library') {
+  if (state.view === 'browse') {
     if (state.library.mode === 'games') params.set('mode', 'games')
     if (state.library.page > 1) params.set('page', String(state.library.page))
     if (state.library.mode === 'positions' && state.library.viewed !== 'all') {
@@ -74,9 +96,17 @@ export function buildUrlFromState(state) {
     }
   }
 
+  if (state.view === 'workout' && state.workout.tactic !== 'all') {
+    params.set('tactic', state.workout.tactic)
+  }
+
   if (state.view === 'play' && state.itemId !== null) {
     params.set('item', String(state.itemId))
     if (state.play.ply !== null) params.set('ply', String(state.play.ply))
+    if (state.play.from === 'workout') {
+      params.set('from', 'workout')
+      if (state.workout.tactic !== 'all') params.set('tactic', state.workout.tactic)
+    }
     if (typeof state.itemId !== 'string' || !state.itemId.startsWith('game:')) {
       if (state.play.side === 'black' || state.play.side === 'white') params.set('side', state.play.side)
     }
@@ -87,7 +117,7 @@ export function buildUrlFromState(state) {
 
 
 function buildBasePath(state) {
-  if (state.view === 'library' && state.library.mode === 'positions' && state.library.tags.length > 0) {
+  if (state.view === 'browse' && state.library.mode === 'positions' && state.library.tags.length > 0) {
     return `${TAG_PATH_PREFIX}${encodeTagPath(state.library.tags)}/`
   }
   return '/'
@@ -120,6 +150,10 @@ export function mergeState(currentState, partial) {
       ...currentState.library,
       ...(partial.library || {}),
     },
+    workout: {
+      ...currentState.workout,
+      ...(partial.workout || {}),
+    },
     play: {
       ...currentState.play,
       ...(partial.play || {}),
@@ -150,4 +184,13 @@ const PROGRESS_FILTER_VALUES = new Set([
 
 function normalizePlaySide(value) {
   return value === 'white' || value === 'black' ? value : null
+}
+
+function normalizePlayOrigin(value) {
+  return value === 'workout' ? 'workout' : 'browse'
+}
+
+function normalizeWorkoutTactic(value) {
+  const normalized = String(value || '').trim()
+  return normalized ? normalized : 'all'
 }

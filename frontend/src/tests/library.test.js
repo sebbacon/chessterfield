@@ -82,13 +82,13 @@ describe('Library view', () => {
 
   it('switches from positions to games', async () => {
     await mountLibrary(app, navigate, {}, syncState)
-    expect(app.querySelector('h1').textContent).toBe('Positions')
+    expect(app.querySelector('h1').textContent).toBe('Browse Positions')
     expect(app.textContent).toContain('Starting Position')
 
     app.querySelector('#show-games').click()
     await flush()
 
-    expect(app.querySelector('h1').textContent).toBe('Games')
+    expect(app.querySelector('h1').textContent).toBe('Browse Games')
     expect(app.textContent).toContain('vs opponent (2026-03-20)')
     expect(app.textContent).toContain('You won')
     expect(syncState).toHaveBeenCalledWith({
@@ -98,7 +98,7 @@ describe('Library view', () => {
 
     app.querySelector('.open-game-btn').click()
     expect(navigate).toHaveBeenCalledWith('play', 'game:2', {
-      play: { ply: null, side: 'white' },
+      play: { ply: null, side: 'white', from: 'browse' },
     })
   })
 
@@ -198,7 +198,7 @@ describe('Library view', () => {
     card.click()
 
     expect(navigate).toHaveBeenCalledWith('play', 1, {
-      play: { ply: 0, side: null },
+      play: { ply: 0, side: null, from: 'browse' },
     })
   })
 
@@ -208,7 +208,7 @@ describe('Library view', () => {
     await mountLibrary(app, navigate, {}, syncState)
     await flush()
 
-    expect(app.querySelector('h1')?.textContent).toBe('Games')
+    expect(app.querySelector('h1')?.textContent).toBe('Browse Games')
     expect(app.textContent).toContain('vs opponent (2026-03-20)')
   })
 })

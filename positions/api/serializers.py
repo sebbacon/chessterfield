@@ -9,6 +9,7 @@ def position_to_dict(pos, *, user_state=None):
         "name": pos.name,
         "fen": pos.fen,
         "notes": pos.notes,
+        "possible_bug": pos.possible_bug,
         "created_at": pos.created_at.isoformat(),
         "tags": sorted(pos.tags.values_list("name", flat=True)),
         "source_kind": source_kind_from_value(pos.source),

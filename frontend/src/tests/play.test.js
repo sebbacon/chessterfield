@@ -127,6 +127,46 @@ describe('Play view game loop', () => {
     expect(window.localStorage.getItem('chessterfield:engine-move-speed:v1')).toBe('fast')
   })
 
+  it('flags a position for review from the play screen', async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ authenticated: false, user: null, practice_modes: [] }),
+        })
+      }
+      if (url === '/api/positions/1/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 1, name: 'Test', fen: STARTING_FEN, notes: '', tags: [], possible_bug: true, next_position_id: null }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 1, name: 'Test', fen: STARTING_FEN, notes: '', tags: [], possible_bug: false, next_position_id: null }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    const button = app.querySelector('#flag-position-btn')
+    expect(button?.textContent).toContain('Problem? Flag this position for review')
+
+    button.click()
+    await flush()
+
+    const patchCall = fetchMock.mock.calls.find(([url, options]) => url === '/api/positions/1/' && options?.method === 'PATCH')
+    expect(patchCall).toBeTruthy()
+    expect(JSON.parse(patchCall[1].body)).toEqual({ possible_bug: true })
+    expect(button?.textContent).toContain('Flagged for review')
+    expect(button?.disabled).toBe(true)
+    expect(app.querySelector('#flag-position-status')?.textContent).toContain('Saved')
+  })
+
   it('applies engine bestmove to the board after user move', async () => {
     await mountPlay(app, navigate, 1, {}, syncState)
     cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
@@ -317,11 +357,12 @@ describe('Play view game loop', () => {
 
     app.querySelector('#next-position-btn').click()
     expect(navigate).toHaveBeenCalledWith('play', 2, {
-      play: { ply: 0, side: null },
+      play: { ply: 0, side: null, from: 'browse' },
+      workout: {},
     })
   })
 
-  it('returns to the library at the end of a filtered next-position flow', async () => {
+  it('returns to browse at the end of a filtered next-position flow', async () => {
     vi.stubGlobal('fetch', vi.fn((url) =>
       Promise.resolve({
         ok: true,
@@ -337,10 +378,67 @@ describe('Play view game loop', () => {
     })
 
     expect(fetch).toHaveBeenCalledWith('/api/positions/1/?tag=endgame')
-    expect(app.querySelector('#next-position-btn')?.textContent).toContain('Back to Library')
+    expect(app.querySelector('#next-position-btn')?.textContent).toContain('Back to Browse')
 
     app.querySelector('#next-position-btn').click()
-    expect(navigate).toHaveBeenCalledWith('library')
+    expect(navigate).toHaveBeenCalledWith('browse', null, { workout: {} })
+  })
+
+  it('uses the workout tactic context for position loading and returns to workout', async () => {
+    vi.stubGlobal('fetch', vi.fn((url) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ authenticated: true, user: { display_name: 'Player One' }, practice_modes: [] }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ id: 1, name: 'Fork Drill', fen: STARTING_FEN, notes: '', tags: ['tactic:fork'], next_position_id: null }),
+      })
+    }))
+
+    await mountPlay(app, navigate, 1, { from: 'workout' }, syncState, {
+      workout: { tactic: 'tactic:fork' },
+    })
+
+    expect(fetch).toHaveBeenCalledWith('/api/positions/1/?sort=workout&tactic=tactic%3Afork')
+    expect(app.querySelector('#back-btn')?.textContent).toContain('Workout')
+    expect(app.querySelector('#next-position-btn')?.textContent).toContain('Back to Workout')
+
+    app.querySelector('#next-position-btn')?.click()
+    expect(navigate).toHaveBeenCalledWith('workout', null, { workout: { tactic: 'tactic:fork' } })
+  })
+
+  it('skips an invalid workout position by redirecting to the next valid one', async () => {
+    vi.stubGlobal('fetch', vi.fn((url) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ authenticated: true, user: { display_name: 'Player One' }, practice_modes: [] }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 20539,
+          name: 'Invalid Workout Position',
+          fen: '8/8/8/8/8/8/6r1/1Q1K3n w - - 0 1',
+          notes: '',
+          tags: ['tactic:Attack On A Pinned Piece'],
+          next_position_id: 20540,
+        }),
+      })
+    }))
+
+    await mountPlay(app, navigate, 20539, { from: 'workout' }, syncState, {
+      workout: { tactic: 'tactic:Attack On A Pinned Piece' },
+    })
+
+    expect(navigate).toHaveBeenCalledWith('play', 20540, {
+      workout: { tactic: 'tactic:Attack On A Pinned Piece' },
+      play: { ply: 0, side: null, from: 'workout' },
+    }, { replace: true })
   })
 
   it('defaults play side from the FEN turn when none is specified', async () => {
@@ -433,7 +531,8 @@ describe('Play view game loop', () => {
     capturedCgConfig.movable.events.after('f7', 'g7')
     app.querySelector('#next-position-btn').click()
     expect(navigate).toHaveBeenCalledWith('play', 2, {
-      play: { ply: 0, side: null },
+      play: { ply: 0, side: null, from: 'browse' },
+      workout: {},
     })
   })
 

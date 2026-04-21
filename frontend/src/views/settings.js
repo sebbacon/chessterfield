@@ -9,7 +9,7 @@ export async function mountSettings(app, navigate) {
     <div class="settings-layout">
       <div class="settings-card">
         <div class="settings-header">
-          <button id="settings-back" class="btn-secondary">← Library</button>
+          <button id="settings-back" class="btn-secondary">← Workout</button>
           <div class="settings-header-copy">
             <h1>Settings</h1>
             <p class="settings-subtitle">${session.authenticated ? 'Saved to your account.' : 'Saved only on this device.'}</p>
@@ -27,7 +27,7 @@ export async function mountSettings(app, navigate) {
           ${selectFieldHtml('preferred_side', 'Preferred play side', settings.preferred_side)}
           ${selectFieldHtml('engine_move_speed', 'Engine move speed', settings.engine_move_speed)}
           ${selectFieldHtml('analysis_visibility', 'Best-next-moves panel', settings.analysis_visibility)}
-          ${selectFieldHtml('default_library_mode', 'Default library view', settings.default_library_mode)}
+          ${selectFieldHtml('default_library_mode', 'Default browse view', settings.default_library_mode)}
 
           <div class="settings-actions">
             <button type="submit" class="btn-primary">Save settings</button>
@@ -38,7 +38,7 @@ export async function mountSettings(app, navigate) {
     </div>
   `
 
-  app.querySelector('#settings-back').addEventListener('click', () => navigate('library'))
+  app.querySelector('#settings-back').addEventListener('click', () => navigate('workout'))
   app.querySelector('#settings-form').addEventListener('submit', async event => {
     event.preventDefault()
 
@@ -85,7 +85,7 @@ function helpTextForField(field) {
     case 'analysis_visibility':
       return 'Sets whether the best-next-moves panel starts open or hidden.'
     default:
-      return 'Sets which tab the library opens to by default.'
+      return 'Sets which browse tab opens by default.'
   }
 }
 

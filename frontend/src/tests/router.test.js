@@ -4,6 +4,13 @@ import { buildUrlFromState, DEFAULT_STATE, mergeState, parseUrlState } from '../
 
 
 describe('router state', () => {
+  it('defaults the root route to workout', () => {
+    const state = parseUrlState('/', '')
+
+    expect(state.view).toBe('workout')
+    expect(state.workout.tactic).toBe('all')
+  })
+
   it('parses a game ply URL', () => {
     const state = parseUrlState('?view=play&item=game%3A12&ply=5')
     expect(state.view).toBe('play')
@@ -14,6 +21,7 @@ describe('router state', () => {
 
   it('builds a library URL with filters', () => {
     const state = mergeState(DEFAULT_STATE, {
+      view: 'browse',
       library: {
         mode: 'positions',
         page: 3,
@@ -22,13 +30,13 @@ describe('router state', () => {
       },
     })
 
-    expect(buildUrlFromState(state)).toBe('/tags/endgame+lichess/?page=3&progress=not_started')
+    expect(buildUrlFromState(state)).toBe('/tags/endgame+lichess/?view=browse&page=3&progress=not_started')
   })
 
   it('parses a tagged library URL', () => {
     const state = parseUrlState('/tags/endgame+lichess/', '?page=2&progress=revision')
 
-    expect(state.view).toBe('library')
+    expect(state.view).toBe('browse')
     expect(state.library.mode).toBe('positions')
     expect(state.library.page).toBe(2)
     expect(state.library.tags).toEqual(['endgame', 'lichess'])
@@ -37,6 +45,7 @@ describe('router state', () => {
 
   it('preserves authenticated progress filters in library URLs', () => {
     const state = mergeState(DEFAULT_STATE, {
+      view: 'browse',
       library: {
         mode: 'positions',
         page: 1,
@@ -45,8 +54,19 @@ describe('router state', () => {
       },
     })
 
-    expect(buildUrlFromState(state)).toBe('/?progress=mastered')
+    expect(buildUrlFromState(state)).toBe('/?view=browse&progress=mastered')
     expect(parseUrlState('/', '?progress=not_started').library.viewed).toBe('not_started')
+  })
+
+  it('builds and parses a workout tactic route', () => {
+    const state = mergeState(DEFAULT_STATE, {
+      workout: {
+        tactic: 'tactic:fork',
+      },
+    })
+
+    expect(buildUrlFromState(state)).toBe('/?tactic=tactic%3Afork')
+    expect(parseUrlState('/', '?tactic=tactic%3Afork').workout.tactic).toBe('tactic:fork')
   })
 
   it('builds a bookmarked play URL for a saved position', () => {

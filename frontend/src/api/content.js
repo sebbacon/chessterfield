@@ -4,17 +4,21 @@ export function fetchTags() {
   return requestJson('/api/tags/')
 }
 
-export function fetchPositions({ tags = [], page = 1, progress = 'all', sort = 'oldest' } = {}) {
+export function fetchPositions({ tags = [], page = 1, progress = 'all', sort = 'oldest', tactic = null } = {}) {
   const params = new URLSearchParams()
   params.set('page', String(page))
   if (progress !== 'all') params.set('progress', progress)
   if (sort !== 'oldest') params.set('sort', sort)
+  if (tactic) params.set('tactic', tactic)
   tags.forEach(tag => params.append('tag', tag))
   return requestJson(`/api/positions/?${params.toString()}`)
 }
 
-export function fetchPosition(positionId, { tags = [] } = {}) {
+export function fetchPosition(positionId, { tags = [], progress = 'all', sort = 'oldest', tactic = null } = {}) {
   const params = new URLSearchParams()
+  if (progress !== 'all') params.set('progress', progress)
+  if (sort !== 'oldest') params.set('sort', sort)
+  if (tactic) params.set('tactic', tactic)
   tags.forEach(tag => params.append('tag', tag))
   const query = params.toString()
   return requestJson(`/api/positions/${positionId}/${query ? `?${query}` : ''}`)
@@ -27,6 +31,13 @@ export function createPosition(payload) {
   })
 }
 
+export function updatePosition(positionId, payload) {
+  return requestJson(`/api/positions/${positionId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+}
+
 export function fetchGames({ page = 1 } = {}) {
   return requestJson(`/api/games/?page=${page}`)
 }
@@ -34,4 +45,3 @@ export function fetchGames({ page = 1 } = {}) {
 export function fetchGame(gameId) {
   return requestJson(`/api/games/${gameId}/`)
 }
-

@@ -28,7 +28,7 @@ class PositionAdminForm(forms.ModelForm):
 
     class Meta:
         model = Position
-        fields = ["name", "tag_names", "fen", "notes", "source"]
+        fields = ["name", "tag_names", "fen", "notes", "source", "possible_bug"]
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -102,8 +102,8 @@ class RecentImportFilter(admin.SimpleListFilter):
 class PositionAdmin(admin.ModelAdmin):
     form = PositionAdminForm
     change_list_template = "admin/positions/position/change_list.html"
-    fields = ("name", "tag_names", "fen", "notes", "source", "created_at")
-    list_display = ("created_at", "name", "source_kind", "tag_list", "source")
+    fields = ("name", "tag_names", "fen", "notes", "source", "possible_bug", "created_at")
+    list_display = ("created_at", "name", "possible_bug", "source_kind", "tag_list", "source")
     list_display_links = ("created_at",)
     list_editable = ("name",)
     list_filter = (SourceKindFilter, RecentImportFilter, ("tags", admin.RelatedOnlyFieldListFilter))

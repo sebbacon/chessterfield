@@ -35,6 +35,7 @@ class Position(models.Model):
     name = models.CharField(max_length=100)
     fen = models.TextField()
     notes = models.TextField(blank=True)
+    possible_bug = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     tags = models.ManyToManyField(Tag, blank=True)
     # Format: lichess:<game_id>:<ply> — used for deduplication on re-import

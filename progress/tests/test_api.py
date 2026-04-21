@@ -1,11 +1,12 @@
 import json
+from datetime import datetime, timezone as dt_timezone
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.test import Client
 from django.utils import timezone
 
-from positions.models import Position
+from positions.models import Position, Tag
 from progress.models import PracticeAttempt, UserPositionState
 
 
@@ -287,6 +288,96 @@ def test_position_list_filters_by_revision_status(authed_client, user):
 
     assert response.status_code == 200
     assert [row['name'] for row in payload['results']] == ['Revision']
+
+
+@pytest.mark.django_db
+def test_workout_sort_orders_positions_by_progress_bucket_and_last_attempt(authed_client, user):
+    invalid_fresh = Position.objects.create(name='Invalid Fresh', fen='8/8/8/8/8/8/6r1/1Q1K3n w - - 0 1', notes='')
+    tactic = Position.objects.create(name='Fresh A', fen=STARTING_FEN, notes='')
+    second_fresh = Position.objects.create(name='Fresh B', fen=STARTING_FEN, notes='')
+    in_progress_old = Position.objects.create(name='In Progress Old', fen=STARTING_FEN, notes='')
+    in_progress_new = Position.objects.create(name='In Progress New', fen=STARTING_FEN, notes='')
+    revision_old = Position.objects.create(name='Revision Old', fen=STARTING_FEN, notes='')
+    revision_new = Position.objects.create(name='Revision New', fen=STARTING_FEN, notes='')
+    mastered = Position.objects.create(name='Mastered', fen=STARTING_FEN, notes='')
+
+    tactic_tag = Tag.objects.create(name='tactic:fork')
+    for position in (invalid_fresh, tactic, second_fresh, in_progress_old, in_progress_new, revision_old, revision_new, mastered):
+        position.tags.add(tactic_tag)
+
+    old_attempt_time = datetime(2026, 4, 1, 10, 0, tzinfo=dt_timezone.utc)
+    new_attempt_time = datetime(2026, 4, 2, 10, 0, tzinfo=dt_timezone.utc)
+
+    UserPositionState.objects.create(
+        user=user,
+        position=in_progress_old,
+        status=UserPositionState.Status.IN_PROGRESS,
+        last_played_at=old_attempt_time,
+        attempt_count=1,
+    )
+    UserPositionState.objects.create(
+        user=user,
+        position=in_progress_new,
+        status=UserPositionState.Status.IN_PROGRESS,
+        last_played_at=new_attempt_time,
+        attempt_count=1,
+    )
+    UserPositionState.objects.create(
+        user=user,
+        position=revision_old,
+        status=UserPositionState.Status.REVISION,
+        solved_count=1,
+        mastery_score=40,
+        last_played_at=old_attempt_time,
+        attempt_count=1,
+    )
+    UserPositionState.objects.create(
+        user=user,
+        position=revision_new,
+        status=UserPositionState.Status.REVISION,
+        solved_count=1,
+        mastery_score=60,
+        last_played_at=new_attempt_time,
+        attempt_count=1,
+    )
+    UserPositionState.objects.create(
+        user=user,
+        position=mastered,
+        status=UserPositionState.Status.MASTERED,
+        solved_count=3,
+        mastery_score=92,
+        last_played_at=new_attempt_time,
+        attempt_count=3,
+    )
+
+    response = authed_client.get('/api/positions/?sort=workout&tactic=tactic:fork')
+    payload = json.loads(response.content)
+
+    invalid_fresh.refresh_from_db()
+    assert response.status_code == 200
+    assert invalid_fresh.possible_bug is True
+    assert [row['name'] for row in payload['results']] == [
+        'Fresh A',
+        'Fresh B',
+        'In Progress Old',
+        'In Progress New',
+        'Revision Old',
+        'Revision New',
+    ]
+
+
+@pytest.mark.django_db
+def test_workout_all_tactics_filter_only_returns_tactic_positions(authed_client):
+    tactic_position = Position.objects.create(name='Tactic Position', fen=STARTING_FEN, notes='')
+    non_tactic_position = Position.objects.create(name='Plain Position', fen=STARTING_FEN, notes='')
+    tactic_position.tags.add(Tag.objects.create(name='tactic:pin'))
+    non_tactic_position.tags.add(Tag.objects.create(name='opening'))
+
+    response = authed_client.get('/api/positions/?sort=workout&tactic=all')
+    payload = json.loads(response.content)
+
+    assert response.status_code == 200
+    assert [row['name'] for row in payload['results']] == ['Tactic Position']
 
 
 @pytest.mark.django_db
