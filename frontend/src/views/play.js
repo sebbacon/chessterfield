@@ -18,6 +18,10 @@ const ANALYSIS_MOVETIME_MS = 1200
 const HINT_MOVETIME_MS = 1000
 const ANALYSIS_VARIATIONS = 4
 const PUZZLE_TARGET_DEPTH_PLIES = 4
+const PUZZLE_MATE_LOOKAHEAD_PLIES = 8
+const PUZZLE_MATERIAL_SWING_THRESHOLD = 300
+const PUZZLE_EVAL_SOLVE_THRESHOLD = 250
+const PUZZLE_EVAL_FAIL_THRESHOLD = 0
 const ENGINE_MOVE_SPEEDS = {
   fast: { label: 'Fast (~1s)', movetimeMs: 1000 },
   standard: { label: 'Standard (~3s)', movetimeMs: 3000 },
@@ -146,7 +150,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           <div class="result-overlay hidden" id="result-overlay" aria-live="polite">
             <div class="result-card">
               <div class="result-copy">
-                <p class="result-eyebrow">Game over</p>
+                <p id="result-eyebrow" class="result-eyebrow">Game over</p>
                 <h2 id="result-text"></h2>
               </div>
               <button id="dismiss-result-btn" class="btn-secondary">Dismiss</button>
@@ -409,6 +413,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (record) {
       analysisByPly.set(search.ply, record)
       maybeFreezePuzzleLine(search, record)
+      maybeResolveEvalPuzzle(search, record)
       updateMoveHistory()
       if (search.ply === viewIndex) renderAnalysisForPly(search.ply)
     }
@@ -574,6 +579,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     currentSearch = null
     sendToEngine('stop')
     closeActiveAttempt(resultCodeForText(text), { completionReason: 'game_end' })
+    showOverlay({ eyebrow: 'Game over', text })
+  }
+
+  function showOverlay({ eyebrow = 'Game over', text }) {
+    app.querySelector('#result-eyebrow').textContent = eyebrow
     app.querySelector('#result-text').textContent = text
     app.querySelector('#result-overlay').classList.remove('hidden')
   }
@@ -991,17 +1001,25 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!isTrackedPuzzleAttempt() || puzzleState.expectedLineReady) return
     if (search.ply !== 0) return
     const primaryVariation = record?.variations?.[0]
+    const puzzleGoal = determinePuzzleGoal({
+      fen: positionHistory[0].fen,
+      pv: primaryVariation?.pv || [],
+      userColor,
+      score: primaryVariation,
+    })
     const userLine = extractExpectedUserLine(
       positionHistory[0].fen,
       primaryVariation?.pv || [],
       userColor,
-      puzzleState.targetDepthPlies,
+      puzzleGoal.targetDepthPlies,
     )
     if (userLine.length === 0) return
     puzzleState.expectedLine = userLine
     puzzleState.targetDepthPlies = userLine.length
+    puzzleState.completionMode = puzzleGoal.mode
     puzzleState.expectedLineReady = true
     renderPuzzleFeedback({
+      completionMode: puzzleState.completionMode,
       matchedPrefixPlies: puzzleState.matchedPrefixPlies,
       targetDepthPlies: puzzleState.targetDepthPlies,
       completionReason: 'tracking',
@@ -1015,10 +1033,23 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     puzzleState.playedLine.push(moveUci)
     if (!puzzleState.expectedLineReady) return
 
+    if (puzzleState.completionMode === 'eval') {
+      puzzleState.pendingEvalCheck = true
+      renderPuzzleFeedback({
+        completionMode: puzzleState.completionMode,
+        matchedPrefixPlies: puzzleState.playedLine.length,
+        targetDepthPlies: puzzleState.targetDepthPlies,
+        completionReason: 'tracking',
+        solved: false,
+      })
+      return
+    }
+
     const expectedMove = puzzleState.expectedLine[puzzleState.playedLine.length - 1]
     if (sameMove(expectedMove, moveUci)) {
       puzzleState.matchedPrefixPlies = puzzleState.playedLine.length
       renderPuzzleFeedback({
+        completionMode: puzzleState.completionMode,
         matchedPrefixPlies: puzzleState.matchedPrefixPlies,
         targetDepthPlies: puzzleState.targetDepthPlies,
         completionReason: 'tracking',
@@ -1039,12 +1070,60 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     })
   }
 
+  function maybeResolveEvalPuzzle(search, record) {
+    if (!isTrackedPuzzleAttempt() || attemptClosed) return
+    if (puzzleState.completionMode !== 'eval' || !puzzleState.pendingEvalCheck) return
+    if (search.kind !== 'analysis') return
+
+    const userScore = scoreForColor(record?.score, userColor, record?.fen)
+    if (userScore === null) return
+
+    const completedMoveCount = puzzleState.playedLine.length
+    const reachedFallbackDepth = completedMoveCount >= puzzleState.targetDepthPlies
+    puzzleState.pendingEvalCheck = false
+
+    if (userScore >= PUZZLE_EVAL_SOLVE_THRESHOLD || (reachedFallbackDepth && userScore > PUZZLE_EVAL_FAIL_THRESHOLD)) {
+      puzzleState.matchedPrefixPlies = completedMoveCount
+      closeActiveAttempt('completed', {
+        completionReason: userScore >= PUZZLE_EVAL_SOLVE_THRESHOLD ? 'winning_eval' : 'stable_eval',
+        completedNormally: true,
+        targetDepthOverride: completedMoveCount,
+        matchedPrefixOverride: completedMoveCount,
+      })
+      showOverlay({
+        eyebrow: 'Puzzle solved',
+        text: 'Solved it! The winning eval held after the best reply.',
+      })
+      return
+    }
+
+    if (userScore <= PUZZLE_EVAL_FAIL_THRESHOLD) {
+      closeActiveAttempt('lost', {
+        completionReason: 'eval_drop',
+        completedNormally: false,
+        targetDepthOverride: Math.max(completedMoveCount, 1),
+        matchedPrefixOverride: Math.max(0, completedMoveCount - 1),
+      })
+      return
+    }
+
+    renderPuzzleFeedback({
+      completionMode: puzzleState.completionMode,
+      matchedPrefixPlies: completedMoveCount,
+      targetDepthPlies: puzzleState.targetDepthPlies,
+      completionReason: 'tracking',
+      solved: false,
+    })
+  }
+
   function buildAttemptClosePayload(result, options = {}) {
+    const targetDepthPlies = Number(options.targetDepthOverride ?? puzzleState.targetDepthPlies)
+    const matchedPrefixPlies = Number(options.matchedPrefixOverride ?? puzzleState.matchedPrefixPlies)
     return {
       result,
-      target_depth_plies: puzzleState.targetDepthPlies,
-      matched_prefix_plies: puzzleState.matchedPrefixPlies,
-      score_delta: puzzleState.matchedPrefixPlies,
+      target_depth_plies: targetDepthPlies,
+      matched_prefix_plies: matchedPrefixPlies,
+      score_delta: Number(options.scoreDeltaOverride ?? matchedPrefixPlies),
       expected_line: puzzleState.expectedLine,
       played_line: puzzleState.playedLine,
       completion_reason: options.completionReason || '',
@@ -1074,6 +1153,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     const container = app.querySelector('#puzzle-feedback')
     if (!container || !isTrackedPuzzleAttempt()) return
     const displaySummary = {
+      completionMode: summary?.completionMode ?? puzzleState.completionMode,
       ...puzzleSummary,
       ...summary,
       attemptCount: Number(summary?.attemptCount ?? puzzleSummary.attemptCount ?? 0),
@@ -1134,13 +1214,13 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     if (!analysis?.variations?.length || !moveUci) return null
 
     const mover = fenSideToColor(previousStep.fen)
-    const bestScore = scoreForColor(analysis.variations[0], mover)
+    const bestScore = scoreForColor(analysis.variations[0], mover, analysis.fen)
     if (bestScore === null) return null
 
     const matchedVariation = analysis.variations.find(line => sameMove(line.firstMove, moveUci))
     const actualScore = matchedVariation
-      ? scoreForColor(matchedVariation, mover)
-      : scoreForColor(analysisByPly.get(ply)?.score, mover)
+      ? scoreForColor(matchedVariation, mover, analysis.fen)
+      : scoreForColor(analysisByPly.get(ply)?.score, mover, currentStep.fen)
     if (actualScore === null) return null
 
     const loss = Math.max(0, bestScore - actualScore)
@@ -1184,10 +1264,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     return score.cp
   }
 
-  function scoreForColor(score, color) {
+  function scoreForColor(score, color, fen) {
     const numeric = scoreToNumeric(score)
-    if (numeric === null) return null
-    return color === 'white' ? numeric : -numeric
+    if (numeric === null || !fen) return null
+    const sideToMove = fenSideToColor(fen)
+    return color === sideToMove ? numeric : -numeric
   }
 
   function lastMoveToUci(lastMove) {
@@ -1411,6 +1492,8 @@ function resultCodeForText(text) {
 
 function createPuzzleState() {
   return {
+    completionMode: 'line',
+    pendingEvalCheck: false,
     targetDepthPlies: PUZZLE_TARGET_DEPTH_PLIES,
     expectedLine: [],
     expectedLineReady: false,
@@ -1483,6 +1566,105 @@ function moveToUci(move) {
   return `${move.from}${move.to}${move.promotion || ''}`
 }
 
+function determinePuzzleGoal({ fen, pv, userColor, score }) {
+  const mateTargetDepth = mateCompletionDepth({ fen, pv, userColor, score })
+  if (mateTargetDepth !== null) {
+    return { mode: 'line', targetDepthPlies: mateTargetDepth }
+  }
+
+  const advantageTargetDepth = materialSwingCompletionDepth({ fen, pv, userColor })
+  if (advantageTargetDepth !== null) {
+    return { mode: 'eval', targetDepthPlies: advantageTargetDepth }
+  }
+
+  return { mode: 'eval', targetDepthPlies: PUZZLE_TARGET_DEPTH_PLIES }
+}
+
+function mateCompletionDepth({ fen, pv, userColor, score }) {
+  const mateDistance = Number(score?.mate)
+  if (!Number.isFinite(mateDistance) || mateDistance === 0) return null
+  const sideToMove = fenSideToColor(fen)
+  const mateFavorsUser = (mateDistance > 0 && sideToMove === userColor)
+    || (mateDistance < 0 && sideToMove !== userColor)
+  if (!mateFavorsUser) return null
+  if (Math.abs(mateDistance) > PUZZLE_MATE_LOOKAHEAD_PLIES) return null
+
+  const mateTargetByScore = Math.abs(mateDistance)
+  const board = new Chess(fen)
+  let userMoveCount = 0
+  const limit = Math.min(pv.length, PUZZLE_MATE_LOOKAHEAD_PLIES)
+
+  for (let index = 0; index < limit; index += 1) {
+    const move = applyUciMove(board, pv[index])
+    if (!move) break
+    if (move.color === colorToChessJs(userColor)) userMoveCount += 1
+    if (board.isCheckmate()) {
+      return userMoveCount > 0 ? userMoveCount : mateTargetByScore
+    }
+  }
+
+  return Math.max(1, Math.min(mateTargetByScore, countUserMovesInPv(fen, pv, userColor)))
+}
+
+function materialSwingCompletionDepth({ fen, pv, userColor }) {
+  const board = new Chess(fen)
+  const initialMaterialScore = materialScoreForColor(board, userColor)
+  let userMoveCount = 0
+
+  for (let index = 0; index < pv.length; index += 1) {
+    const move = applyUciMove(board, pv[index])
+    if (!move) break
+    const moverColor = move.color === 'w' ? 'white' : 'black'
+    if (moverColor === userColor) userMoveCount += 1
+
+    const durableCheckpoint = board.turn() === colorToChessJs(userColor) || index === pv.length - 1 || board.isGameOver()
+    if (!durableCheckpoint || userMoveCount === 0) continue
+
+    const currentMaterialScore = materialScoreForColor(board, userColor)
+    if ((currentMaterialScore - initialMaterialScore) >= PUZZLE_MATERIAL_SWING_THRESHOLD) {
+      return userMoveCount
+    }
+  }
+
+  return null
+}
+
+function applyUciMove(board, uciMove) {
+  try {
+    return board.move({
+      from: uciMove.slice(0, 2),
+      to: uciMove.slice(2, 4),
+      promotion: uciMove[4] || undefined,
+    })
+  } catch {
+    return null
+  }
+}
+
+function materialScoreForColor(board, color) {
+  const weights = {
+    p: 100,
+    n: 320,
+    b: 330,
+    r: 500,
+    q: 900,
+    k: 0,
+  }
+  let score = 0
+  for (const row of board.board()) {
+    for (const piece of row) {
+      if (!piece) continue
+      const value = weights[piece.type] || 0
+      score += piece.color === colorToChessJs(color) ? value : -value
+    }
+  }
+  return score
+}
+
+function colorToChessJs(color) {
+  return color === 'black' ? 'b' : 'w'
+}
+
 function extractExpectedUserLine(fen, pv, userColor, targetDepthPlies) {
   const line = []
   let turn = fenSideToColor(fen)
@@ -1494,6 +1676,17 @@ function extractExpectedUserLine(fen, pv, userColor, targetDepthPlies) {
     turn = turn === 'white' ? 'black' : 'white'
   }
   return line
+}
+
+function countUserMovesInPv(fen, pv, userColor) {
+  let count = 0
+  let turn = fenSideToColor(fen)
+  for (const move of pv) {
+    if (!move) continue
+    if (turn === userColor) count += 1
+    turn = turn === 'white' ? 'black' : 'white'
+  }
+  return count
 }
 
 function puzzleFeedbackHtml(summary) {
@@ -1512,6 +1705,18 @@ function puzzleFeedbackHtml(summary) {
 }
 
 function puzzleFeedbackHeadline(summary) {
+  if (summary.completionMode === 'eval') {
+    if (summary.completionReason === 'tracking') {
+      return 'Checking whether the attack still holds after best reply'
+    }
+    if (summary.solved) {
+      return `Winning eval held after reply in ${summary.matchedPrefixPlies} move${summary.matchedPrefixPlies === 1 ? '' : 's'}`
+    }
+    if (summary.completionReason === 'eval_drop') {
+      return 'The attack no longer held after best reply'
+    }
+    return ''
+  }
   if (summary.completionReason === 'tracking') {
     return summary.matchedPrefixPlies > 0
       ? `Current attempt: ${summary.matchedPrefixPlies}/${summary.targetDepthPlies}`

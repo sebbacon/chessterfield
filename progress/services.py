@@ -217,11 +217,14 @@ def apply_attempt_rollup(state: UserPositionState) -> None:
     state.best_matched_prefix_plies = max(attempt.matched_prefix_plies for attempt in attempts)
     state.recent_accuracy_score = calculate_recent_accuracy_score(attempts[:RECENT_ATTEMPT_WINDOW])
     state.current_perfect_streak = calculate_current_perfect_streak(attempts)
+    first_solved_attempt_number = calculate_first_solved_attempt_number(attempts)
     state.perfect_record = state.attempt_count >= PERFECT_RECORD_MIN_ATTEMPTS and state.solved_count == state.attempt_count
     state.mastery_score = calculate_mastery_score(
         attempt_count=state.attempt_count,
         solved_count=state.solved_count,
         recent_accuracy_score=state.recent_accuracy_score,
+        current_perfect_streak=state.current_perfect_streak,
+        first_solved_attempt_number=first_solved_attempt_number,
     )
     state.needs_homework = (
         not state.perfect_record
@@ -264,14 +267,36 @@ def calculate_current_perfect_streak(attempts: list[PracticeAttempt]) -> int:
     return streak
 
 
-def calculate_mastery_score(*, attempt_count: int, solved_count: int, recent_accuracy_score: int) -> int:
+def calculate_first_solved_attempt_number(attempts: list[PracticeAttempt]) -> int | None:
+    for index, attempt in enumerate(reversed(attempts), start=1):
+        if attempt_is_solved(attempt):
+            return index
+    return None
+
+
+def calculate_mastery_score(
+    *,
+    attempt_count: int,
+    solved_count: int,
+    recent_accuracy_score: int,
+    current_perfect_streak: int,
+    first_solved_attempt_number: int | None,
+) -> int:
     if attempt_count <= 0:
         return 0
-    solve_rate_score = round(100 * solved_count / attempt_count)
-    confidence_score = round(100 * min(attempt_count, RECENT_ATTEMPT_WINDOW) / RECENT_ATTEMPT_WINDOW)
-    mastery_score = (
-        0.5 * recent_accuracy_score
-        + 0.3 * solve_rate_score
-        + 0.2 * confidence_score
-    )
-    return round(mastery_score)
+    if solved_count <= 0 or first_solved_attempt_number is None:
+        return round(recent_accuracy_score * 0.65)
+
+    # Reward immediate clean solves heavily, then let repeated clean solves rebuild
+    # confidence after earlier misses. Examples:
+    # - solve on attempt 1 => 100
+    # - solve on attempt 2 => 80
+    # - solve on attempt 3 => 60
+    # - fail fail fail solve solve => 70
+    # - fail fail fail solve solve solve solve => 100
+    if first_solved_attempt_number == 1:
+        return 100
+
+    first_solve_score = max(0, 100 - (20 * (first_solved_attempt_number - 1)))
+    recovery_bonus = 30 * max(current_perfect_streak - 1, 0)
+    return min(100, first_solve_score + recovery_bonus)

@@ -162,10 +162,10 @@ def test_practice_attempt_lifecycle_updates_user_state(authed_client, user, posi
     assert attempt.matched_prefix_plies == 4
     assert attempt.expected_line == ['e2e4', 'g1f3', 'f1c4', 'd2d3']
     assert attempt.played_line == ['e2e4', 'g1f3', 'f1c4', 'd2d3']
-    assert state.status == UserPositionState.Status.REVISION
+    assert state.status == UserPositionState.Status.MASTERED
     assert state.attempt_count == 1
     assert state.best_score == 4
-    assert state.mastery_score == 84
+    assert state.mastery_score == 100
     assert state.recent_accuracy_score == 100
     assert state.current_perfect_streak == 1
     assert state.perfect_record is False
@@ -250,7 +250,7 @@ def test_three_perfect_attempts_mark_position_mastered(authed_client, user, posi
     assert state.status == UserPositionState.Status.MASTERED
     assert state.attempt_count == 3
     assert state.solved_count == 3
-    assert state.mastery_score == 92
+    assert state.mastery_score == 100
     assert state.recent_accuracy_score == 100
     assert state.current_perfect_streak == 3
     assert state.perfect_record is True
@@ -413,4 +413,78 @@ def test_practice_attempt_counts_short_solution_as_solved(authed_client, user, p
     assert attempt.target_depth_plies == 2
     assert attempt.matched_prefix_plies == 2
     assert state.solved_count == 1
+    assert state.status == UserPositionState.Status.MASTERED
+
+
+@pytest.mark.django_db
+def test_mastery_score_recovers_after_early_failures(authed_client, user, position):
+    for result in ('lost', 'lost', 'lost', 'completed', 'completed'):
+        start_response = authed_client.post(
+            '/api/practice/attempts/',
+            json.dumps({
+                'position_id': position.id,
+                'mode': 'classic',
+                'target_depth_plies': 4,
+            }),
+            content_type='application/json',
+        )
+        attempt_id = json.loads(start_response.content)['id']
+        payload = {
+            'result': result,
+            'target_depth_plies': 4,
+            'matched_prefix_plies': 4 if result == 'completed' else 0,
+            'expected_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+            'played_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'] if result == 'completed' else ['a2a3'],
+            'completion_reason': 'solved' if result == 'completed' else 'mismatch',
+            'completed_normally': result == 'completed',
+        }
+        finish_response = authed_client.patch(
+            f'/api/practice/attempts/{attempt_id}/',
+            json.dumps(payload),
+            content_type='application/json',
+        )
+        assert finish_response.status_code == 200
+
+    state = UserPositionState.objects.get(user=user, position=position)
+    assert state.attempt_count == 5
+    assert state.solved_count == 2
+    assert state.current_perfect_streak == 2
+    assert state.mastery_score == 70
     assert state.status == UserPositionState.Status.REVISION
+
+
+@pytest.mark.django_db
+def test_mastery_score_caps_at_100_after_long_recovery_streak(authed_client, user, position):
+    for result in ('lost', 'lost', 'lost', 'completed', 'completed', 'completed', 'completed'):
+        start_response = authed_client.post(
+            '/api/practice/attempts/',
+            json.dumps({
+                'position_id': position.id,
+                'mode': 'classic',
+                'target_depth_plies': 4,
+            }),
+            content_type='application/json',
+        )
+        attempt_id = json.loads(start_response.content)['id']
+        payload = {
+            'result': result,
+            'target_depth_plies': 4,
+            'matched_prefix_plies': 4 if result == 'completed' else 0,
+            'expected_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+            'played_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'] if result == 'completed' else ['a2a3'],
+            'completion_reason': 'solved' if result == 'completed' else 'mismatch',
+            'completed_normally': result == 'completed',
+        }
+        finish_response = authed_client.patch(
+            f'/api/practice/attempts/{attempt_id}/',
+            json.dumps(payload),
+            content_type='application/json',
+        )
+        assert finish_response.status_code == 200
+
+    state = UserPositionState.objects.get(user=user, position=position)
+    assert state.attempt_count == 7
+    assert state.solved_count == 4
+    assert state.current_perfect_streak == 4
+    assert state.mastery_score == 100
+    assert state.status == UserPositionState.Status.MASTERED

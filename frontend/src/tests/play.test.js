@@ -742,7 +742,7 @@ describe('Play view game loop', () => {
               score_delta: 4,
               target_depth_plies: 4,
               matched_prefix_plies: 4,
-              completion_reason: 'solved',
+              completion_reason: 'winning_eval',
               completed_normally: true,
               expected_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
               played_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
@@ -789,6 +789,10 @@ describe('Play view game loop', () => {
     mockWorker.onmessage({ data: { type: 'output', line: 'bestmove g8f6' } })
 
     capturedCgConfig.movable.events.after('d2', 'd3')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp -310 nodes 4000 time 100 pv a7a6 c2c3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove a7a6' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 320 nodes 4000 time 100 pv c2c3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove c2c3' } })
     await flush()
 
     const closeCall = fetchMock.mock.calls.find(([url, options]) => url === '/api/practice/attempts/99/' && options?.method === 'PATCH')
@@ -796,8 +800,9 @@ describe('Play view game loop', () => {
     const [, options] = closeCall
     expect(JSON.parse(options.body)).toMatchObject({
       result: 'completed',
+      target_depth_plies: 4,
       matched_prefix_plies: 4,
-      completion_reason: 'solved',
+      completion_reason: 'winning_eval',
       completed_normally: true,
       expected_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
       played_line: ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
@@ -805,7 +810,6 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Attempts:')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Successful:')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('1')
-    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved the line: 4/4')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Puzzle record')
     expect(app.querySelector('#practice-summary')?.textContent).toContain('Status:')
     expect(app.querySelector('#practice-summary')?.textContent).toContain('Revision')
@@ -813,6 +817,10 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#practice-summary')?.textContent).toContain('41%')
     expect(app.querySelector('#puzzle-feedback')?.textContent).not.toContain('Target:')
     expect(app.querySelector('#puzzle-feedback')?.textContent).not.toContain('Puzzle Tracking')
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 4 moves')
+    expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
+    expect(app.querySelector('#result-eyebrow')?.textContent).toContain('Puzzle solved')
+    expect(app.querySelector('#result-text')?.textContent).toContain('Solved it!')
   })
 
   it('counts shorter solved lines as successful attempts', async () => {
@@ -922,5 +930,214 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Successful:')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('1')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved the line: 2/2')
+  })
+
+  it('treats a durable material-winning line as complete before four user moves', async () => {
+    const tacticalFen = '4k3/8/8/4q3/8/8/4Q3/4K3 w - - 0 1'
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                engine_move_speed: 'standard',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            name: 'Win The Queen',
+            fen: tacticalFen,
+            notes: '',
+            tags: [],
+            next_position_id: null,
+            score_summary: {
+              attempt_count: 0,
+              solved_count: 0,
+            },
+          }),
+        })
+      }
+      if (url === '/api/practice/attempts/' && options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 99, mode: 'classic', result: 'active', started_at: '2026-04-19T10:00:00Z', target_depth_plies: 4 }),
+        })
+      }
+      if (url === '/api/practice/attempts/99/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            attempt: {
+              id: 99,
+              result: 'completed',
+              score_delta: 1,
+              target_depth_plies: 1,
+              matched_prefix_plies: 1,
+              completion_reason: 'winning_eval',
+              completed_normally: true,
+              expected_line: ['e2e5'],
+              played_line: ['e2e5'],
+              finished_at: '2026-04-19T10:05:00Z',
+            },
+            user_state: {
+              status: 'revision',
+              attempt_count: 1,
+              best_score: 1,
+              last_score: 1,
+              best_matched_prefix_plies: 1,
+              last_matched_prefix_plies: 1,
+              solved_count: 1,
+            },
+          }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 600 nodes 8000 time 120 pv e2e5 e8f7' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e5' } })
+
+    capturedCgConfig.movable.events.after('e2', 'e5')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp -650 nodes 4000 time 100 pv e8f7 e5c7' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e8f7' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 700 nodes 4000 time 100 pv e5c7' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e5c7' } })
+    await flush()
+
+    const closeCall = fetchMock.mock.calls.find(([url, requestOptions]) => url === '/api/practice/attempts/99/' && requestOptions?.method === 'PATCH')
+    expect(closeCall).toBeTruthy()
+    const [, requestOptions] = closeCall
+    expect(JSON.parse(requestOptions.body)).toMatchObject({
+      result: 'completed',
+      target_depth_plies: 1,
+      matched_prefix_plies: 1,
+      expected_line: ['e2e5'],
+      played_line: ['e2e5'],
+      completion_reason: 'winning_eval',
+    })
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 1 move')
+  })
+
+  it('solves eval-based puzzles correctly when the user is black', async () => {
+    const blackAdvantageFen = 'r4rk1/1p3ppp/p1q1b3/4P3/8/2P1B3/1P3PQP/R5RK b - - 0 1'
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                engine_move_speed: 'standard',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            name: 'Attack On A Pinned Piece',
+            fen: blackAdvantageFen,
+            notes: '',
+            tags: [],
+            next_position_id: null,
+            score_summary: {
+              attempt_count: 0,
+              solved_count: 0,
+            },
+          }),
+        })
+      }
+      if (url === '/api/practice/attempts/' && options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 99, mode: 'classic', result: 'active', started_at: '2026-04-19T10:00:00Z', target_depth_plies: 3 }),
+        })
+      }
+      if (url === '/api/practice/attempts/99/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            attempt: {
+              id: 99,
+              result: 'completed',
+              score_delta: 1,
+              target_depth_plies: 1,
+              matched_prefix_plies: 1,
+              completion_reason: 'winning_eval',
+              completed_normally: true,
+              expected_line: ['e6d5'],
+              played_line: ['e6d5'],
+              finished_at: '2026-04-19T10:05:00Z',
+            },
+            user_state: {
+              status: 'mastered',
+              mastery_score: 100,
+              attempt_count: 1,
+              best_score: 1,
+              last_score: 1,
+              best_matched_prefix_plies: 1,
+              last_matched_prefix_plies: 1,
+              solved_count: 1,
+            },
+          }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, { side: 'black' }, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 549 nodes 8000 time 120 pv e6d5 e3g5 a8e8 g5f6 d5g2 g1g2 e8e6 f2f4' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e6d5' } })
+
+    capturedCgConfig.movable.events.after('e6', 'd5')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp -556 nodes 4000 time 100 pv e3g5 d5g2' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e3g5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 556 nodes 4000 time 100 pv d5g2 g1g2 a8e8' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove d5g2' } })
+    await flush()
+
+    const closeCall = fetchMock.mock.calls.find(([url, requestOptions]) => url === '/api/practice/attempts/99/' && requestOptions?.method === 'PATCH')
+    expect(closeCall).toBeTruthy()
+    const [, requestOptions] = closeCall
+    expect(JSON.parse(requestOptions.body)).toMatchObject({
+      result: 'completed',
+      matched_prefix_plies: 1,
+      completion_reason: 'winning_eval',
+      played_line: ['e6d5'],
+    })
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 1 move')
+    expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
+    expect(app.querySelector('#result-eyebrow')?.textContent).toContain('Puzzle solved')
   })
 })
