@@ -1140,4 +1140,208 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
     expect(app.querySelector('#result-eyebrow')?.textContent).toContain('Puzzle solved')
   })
+
+  it('counts a softened but still held winning eval as solved after the best reply', async () => {
+    const blackAdvantageFen = '6k1/5R1p/6p1/8/4b1P1/P4R2/1r5P/7K b - - 0 1'
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                engine_move_speed: 'standard',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            name: 'Attack On A Pinned Piece',
+            fen: blackAdvantageFen,
+            notes: '',
+            tags: [],
+            next_position_id: null,
+            score_summary: {
+              attempt_count: 0,
+              solved_count: 0,
+            },
+          }),
+        })
+      }
+      if (url === '/api/practice/attempts/' && options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 99, mode: 'classic', result: 'active', started_at: '2026-04-19T10:00:00Z', target_depth_plies: 3 }),
+        })
+      }
+      if (url === '/api/practice/attempts/99/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            attempt: {
+              id: 99,
+              result: 'completed',
+              score_delta: 1,
+              target_depth_plies: 1,
+              matched_prefix_plies: 1,
+              completion_reason: 'winning_eval',
+              completed_normally: true,
+              expected_line: ['b2f2'],
+              played_line: ['b2f2'],
+              finished_at: '2026-04-19T10:05:00Z',
+            },
+            user_state: {
+              status: 'mastered',
+              mastery_score: 100,
+              attempt_count: 1,
+              best_score: 1,
+              last_score: 1,
+              best_matched_prefix_plies: 1,
+              last_matched_prefix_plies: 1,
+              solved_count: 1,
+            },
+          }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, { side: 'black' }, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 387 nodes 8000 time 120 pv b2f2 h1g1 f2f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove b2f2' } })
+
+    capturedCgConfig.movable.events.after('b2', 'f2')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp -160 nodes 4000 time 100 pv h1g1 f2f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove h1g1' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 160 nodes 4000 time 100 pv f2f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove f2f3' } })
+    await flush()
+
+    const closeCall = fetchMock.mock.calls.find(([url, requestOptions]) => url === '/api/practice/attempts/99/' && requestOptions?.method === 'PATCH')
+    expect(closeCall).toBeTruthy()
+    expect(JSON.parse(closeCall[1].body)).toMatchObject({
+      result: 'completed',
+      matched_prefix_plies: 1,
+      completion_reason: 'winning_eval',
+      played_line: ['b2f2'],
+    })
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 1 move')
+    expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
+  })
+
+  it('counts a modest root eval that still holds after best reply as solved', async () => {
+    const blackAdvantageFen = '6k1/5R1p/6p1/8/4b1P1/P4R2/1r5P/7K b - - 0 1'
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                engine_move_speed: 'standard',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            name: 'Attack On A Pinned Piece',
+            fen: blackAdvantageFen,
+            notes: '',
+            tags: [],
+            next_position_id: null,
+            score_summary: {
+              attempt_count: 0,
+              solved_count: 0,
+            },
+          }),
+        })
+      }
+      if (url === '/api/practice/attempts/' && options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 99, mode: 'classic', result: 'active', started_at: '2026-04-19T10:00:00Z', target_depth_plies: 3 }),
+        })
+      }
+      if (url === '/api/practice/attempts/99/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            attempt: {
+              id: 99,
+              result: 'completed',
+              score_delta: 1,
+              target_depth_plies: 1,
+              matched_prefix_plies: 1,
+              completion_reason: 'winning_eval',
+              completed_normally: true,
+              expected_line: ['b2f2'],
+              played_line: ['b2f2'],
+              finished_at: '2026-04-19T10:05:00Z',
+            },
+            user_state: {
+              status: 'mastered',
+              mastery_score: 100,
+              attempt_count: 1,
+              best_score: 1,
+              last_score: 1,
+              best_matched_prefix_plies: 1,
+              last_matched_prefix_plies: 1,
+              solved_count: 1,
+            },
+          }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, { side: 'black' }, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 150 nodes 8000 time 120 pv b2f2 h1g1 f2f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove b2f2' } })
+
+    capturedCgConfig.movable.events.after('b2', 'f2')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp -160 nodes 4000 time 100 pv h1g1 f2f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove h1g1' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score cp 160 nodes 4000 time 100 pv f2f3' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove f2f3' } })
+    await flush()
+
+    const closeCall = fetchMock.mock.calls.find(([url, requestOptions]) => url === '/api/practice/attempts/99/' && requestOptions?.method === 'PATCH')
+    expect(closeCall).toBeTruthy()
+    expect(JSON.parse(closeCall[1].body)).toMatchObject({
+      result: 'completed',
+      matched_prefix_plies: 1,
+      completion_reason: 'winning_eval',
+      played_line: ['b2f2'],
+    })
+  })
 })

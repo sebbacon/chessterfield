@@ -21,6 +21,9 @@ const PUZZLE_TARGET_DEPTH_PLIES = 4
 const PUZZLE_MATE_LOOKAHEAD_PLIES = 8
 const PUZZLE_MATERIAL_SWING_THRESHOLD = 300
 const PUZZLE_EVAL_SOLVE_THRESHOLD = 250
+const PUZZLE_EVAL_HOLD_ROOT_THRESHOLD = 125
+const PUZZLE_EVAL_HOLD_MIN_THRESHOLD = 125
+const PUZZLE_EVAL_HOLD_RATIO = 0.4
 const PUZZLE_EVAL_FAIL_THRESHOLD = 0
 const ENGINE_MOVE_SPEEDS = {
   fast: { label: 'Fast (~1s)', movetimeMs: 1000 },
@@ -1017,6 +1020,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     puzzleState.expectedLine = userLine
     puzzleState.targetDepthPlies = userLine.length
     puzzleState.completionMode = puzzleGoal.mode
+    puzzleState.evalHoldThreshold = puzzleGoal.mode === 'eval'
+      ? heldWinningEvalThreshold(primaryVariation, positionHistory[0].fen)
+      : PUZZLE_EVAL_SOLVE_THRESHOLD
     puzzleState.expectedLineReady = true
     renderPuzzleFeedback({
       completionMode: puzzleState.completionMode,
@@ -1082,10 +1088,10 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     const reachedFallbackDepth = completedMoveCount >= puzzleState.targetDepthPlies
     puzzleState.pendingEvalCheck = false
 
-    if (userScore >= PUZZLE_EVAL_SOLVE_THRESHOLD || (reachedFallbackDepth && userScore > PUZZLE_EVAL_FAIL_THRESHOLD)) {
+    if (userScore >= puzzleState.evalHoldThreshold || (reachedFallbackDepth && userScore > PUZZLE_EVAL_FAIL_THRESHOLD)) {
       puzzleState.matchedPrefixPlies = completedMoveCount
       closeActiveAttempt('completed', {
-        completionReason: userScore >= PUZZLE_EVAL_SOLVE_THRESHOLD ? 'winning_eval' : 'stable_eval',
+        completionReason: userScore >= puzzleState.evalHoldThreshold ? 'winning_eval' : 'stable_eval',
         completedNormally: true,
         targetDepthOverride: completedMoveCount,
         matchedPrefixOverride: completedMoveCount,
@@ -1279,6 +1285,17 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   function sameMove(left, right) {
     if (!left || !right) return false
     return left.slice(0, 4) === right.slice(0, 4)
+  }
+
+  function heldWinningEvalThreshold(score, fen) {
+    const rootUserScore = scoreForColor(score, userColor, fen)
+    if (rootUserScore === null || rootUserScore < PUZZLE_EVAL_HOLD_ROOT_THRESHOLD) {
+      return PUZZLE_EVAL_SOLVE_THRESHOLD
+    }
+    return Math.max(
+      PUZZLE_EVAL_HOLD_MIN_THRESHOLD,
+      Math.min(PUZZLE_EVAL_SOLVE_THRESHOLD, Math.round(rootUserScore * PUZZLE_EVAL_HOLD_RATIO)),
+    )
   }
 
   function uciToSan(fen, uciMove) {
@@ -1493,6 +1510,7 @@ function resultCodeForText(text) {
 function createPuzzleState() {
   return {
     completionMode: 'line',
+    evalHoldThreshold: PUZZLE_EVAL_SOLVE_THRESHOLD,
     pendingEvalCheck: false,
     targetDepthPlies: PUZZLE_TARGET_DEPTH_PLIES,
     expectedLine: [],
