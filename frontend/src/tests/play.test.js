@@ -107,24 +107,20 @@ describe('Play view game loop', () => {
     const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
     expect(sentCmds).toContain('stop')
     expect(sentCmds.some(c => c.startsWith('position fen'))).toBe(true)
-    expect(sentCmds).toContain('go movetime 3000')
+    expect(sentCmds).toContain('go movetime 500')
   })
 
-  it('uses the selected engine speed for engine moves and persists it locally', async () => {
+  it('uses the saved engine speed setting for engine moves', async () => {
+    window.localStorage.setItem('chessterfield:engine-move-speed:v1', 'fast')
+
     await mountPlay(app, navigate, 1, {}, syncState)
-
-    const speedSelect = app.querySelector('#engine-speed-select')
-    expect(speedSelect?.value).toBe('standard')
-
-    speedSelect.value = 'fast'
-    speedSelect.dispatchEvent(new Event('change', { bubbles: true }))
 
     mockWorker.onmessage({ data: { type: 'ready' } })
     capturedCgConfig.movable.events.after('e2', 'e4')
 
     const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
     expect(sentCmds).toContain('go movetime 1000')
-    expect(window.localStorage.getItem('chessterfield:engine-move-speed:v1')).toBe('fast')
+    expect(app.querySelector('#engine-speed-select')).toBeNull()
   })
 
   it('flags a position for review from the play screen', async () => {
@@ -281,7 +277,7 @@ describe('Play view game loop', () => {
 
     const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
     expect(sentCmds).toContain(`position fen ${AFTER_E4_FEN}`)
-    expect(sentCmds).toContain('go movetime 3000')
+    expect(sentCmds).toContain('go movetime 500')
   })
 
   it('lets the user restart from an earlier ply by playing from history', async () => {
@@ -307,7 +303,7 @@ describe('Play view game loop', () => {
 
     const sentCmds = mockWorker.postMessage.mock.calls.map(c => c[0].cmd).filter(Boolean)
     expect(sentCmds).toContain('position fen rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1')
-    expect(sentCmds).toContain('go movetime 3000')
+    expect(sentCmds).toContain('go movetime 500')
   })
 
   it('keeps the full past-moves list visible when stepping back through the line', async () => {
@@ -371,7 +367,7 @@ describe('Play view game loop', () => {
     await mountPlay(app, navigate, 1, {}, syncState)
 
     expect(isPositionViewed(1)).toBe(true)
-    expect(app.querySelector('.viewed-pill')?.textContent).toContain('Seen')
+    expect(app.querySelector('.viewed-pill')).toBeNull()
   })
 
   it('shows a next-position button for saved positions and navigates to it', async () => {
@@ -432,7 +428,7 @@ describe('Play view game loop', () => {
     })
 
     expect(fetch).toHaveBeenCalledWith('/api/positions/1/?sort=workout&tactic=tactic%3Afork')
-    expect(app.querySelector('#back-btn')?.textContent).toContain('Workout')
+    expect(app.querySelector('#back-btn')?.textContent).toBe('All workouts')
     expect(app.querySelector('#next-position-btn')?.textContent).toContain('Back to Workout')
 
     app.querySelector('#next-position-btn')?.click()
@@ -681,12 +677,6 @@ describe('Play view game loop', () => {
           json: () => Promise.resolve({ user_state: { viewed_at: '2026-04-19T10:00:00Z' } }),
         })
       }
-      if (url === '/api/me/settings/' && options?.method === 'PATCH') {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ settings: { engine_move_speed: 'fast' } }),
-        })
-      }
       throw new Error(`Unexpected fetch ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -698,16 +688,7 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#practice-summary')?.textContent).toContain('Mastery:')
     expect(app.querySelector('#practice-summary')?.textContent).toContain('72%')
 
-    const speedSelect = app.querySelector('#engine-speed-select')
-    expect(speedSelect?.value).toBe('slow')
-
-    speedSelect.value = 'fast'
-    speedSelect.dispatchEvent(new Event('change', { bubbles: true }))
-    await flush()
-
-    const settingsCall = fetchMock.mock.calls.find(([url]) => url === '/api/me/settings/')
-    expect(settingsCall).toBeTruthy()
-    expect(JSON.parse(settingsCall[1].body)).toEqual({ engine_move_speed: 'fast' })
+    expect(app.querySelector('#engine-speed-select')).toBeNull()
   })
 
   it('records a signed-in solved puzzle against the frozen best line', async () => {

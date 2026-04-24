@@ -50,6 +50,7 @@ describe('Settings view', () => {
     await mountSettings(app, navigate)
 
     app.querySelector('select[name="preferred_side"]').value = 'black'
+    expect(app.querySelector('select[name="engine_move_speed"]')?.value).toBe('instant')
     app.querySelector('select[name="engine_move_speed"]').value = 'fast'
     app.querySelector('select[name="analysis_visibility"]').value = 'hidden'
     app.querySelector('select[name="default_library_mode"]').value = 'games'
@@ -99,7 +100,7 @@ describe('Settings view', () => {
     expect(app.querySelector('select[name="default_library_mode"]')?.value).toBe('games')
 
     app.querySelector('select[name="preferred_side"]').value = 'auto'
-    app.querySelector('select[name="engine_move_speed"]').value = 'standard'
+    app.querySelector('select[name="engine_move_speed"]').value = 'instant'
     app.querySelector('#settings-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
     await flush()
 
@@ -107,7 +108,7 @@ describe('Settings view', () => {
     expect(settingsCall).toBeTruthy()
     expect(JSON.parse(settingsCall[1].body)).toEqual({
       preferred_side: 'auto',
-      engine_move_speed: 'standard',
+      engine_move_speed: 'instant',
       analysis_visibility: 'hidden',
       default_library_mode: 'games',
     })

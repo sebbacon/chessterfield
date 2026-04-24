@@ -3,7 +3,7 @@ import { updateMySettings } from './api/user.js'
 export const SETTING_DEFAULTS = {
   preferred_side: 'auto',
   analysis_visibility: 'visible',
-  engine_move_speed: 'standard',
+  engine_move_speed: 'instant',
   default_library_mode: 'positions',
 }
 
@@ -18,6 +18,7 @@ export const SETTING_OPTIONS = {
     ['hidden', 'Hide best-next-moves panel'],
   ],
   engine_move_speed: [
+    ['instant', 'Instant (~0.5s)'],
     ['fast', 'Fast (~1s)'],
     ['standard', 'Standard (~3s)'],
     ['slow', 'Slow (~5s)'],

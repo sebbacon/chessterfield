@@ -62,7 +62,7 @@ def test_me_detail_for_authenticated_user(authed_client, user):
     assert payload['authenticated'] is True
     assert payload['user']['username'] == user.username
     assert payload['user']['settings']['preferred_side'] == 'auto'
-    assert payload['user']['settings']['engine_move_speed'] == 'standard'
+    assert payload['user']['settings']['engine_move_speed'] == 'instant'
 
 
 @pytest.mark.django_db

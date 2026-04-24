@@ -29,6 +29,7 @@ def test_me_detail_backfills_missing_user_records(client):
     payload = json.loads(response.content)
     assert payload["authenticated"] is True
     assert payload["user"]["username"] == "legacy-player"
+    assert payload["user"]["settings"]["engine_move_speed"] == "instant"
     assert UserProfile.objects.filter(user=user).exists()
     assert UserSettings.objects.filter(user=user).exists()
 
@@ -61,7 +62,9 @@ def test_me_detail_includes_engine_move_speed(client):
         email="engine-speed@example.com",
         password="password123",
     )
-    settings = UserSettings.objects.create(user=user, engine_move_speed="fast")
+    settings, _created = UserSettings.objects.get_or_create(user=user)
+    settings.engine_move_speed = "fast"
+    settings.save(update_fields=["engine_move_speed", "updated_at"])
     client.force_login(user)
 
     response = client.get("/api/me/")

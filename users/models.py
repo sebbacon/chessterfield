@@ -31,6 +31,7 @@ class UserSettings(models.Model):
         HIDDEN = "hidden", "Hidden"
 
     class EngineMoveSpeed(models.TextChoices):
+        INSTANT = "instant", "Instant"
         FAST = "fast", "Fast"
         STANDARD = "standard", "Standard"
         SLOW = "slow", "Slow"
@@ -57,7 +58,7 @@ class UserSettings(models.Model):
     engine_move_speed = models.CharField(
         max_length=10,
         choices=EngineMoveSpeed.choices,
-        default=EngineMoveSpeed.STANDARD,
+        default=EngineMoveSpeed.INSTANT,
     )
     default_library_mode = models.CharField(
         max_length=10,

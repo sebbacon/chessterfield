@@ -26,6 +26,7 @@ const PUZZLE_EVAL_HOLD_MIN_THRESHOLD = 125
 const PUZZLE_EVAL_HOLD_RATIO = 0.4
 const PUZZLE_EVAL_FAIL_THRESHOLD = 0
 const ENGINE_MOVE_SPEEDS = {
+  instant: { label: 'Instant (~0.5s)', movetimeMs: 500 },
   fast: { label: 'Fast (~1s)', movetimeMs: 1000 },
   standard: { label: 'Standard (~3s)', movetimeMs: 3000 },
   slow: { label: 'Slow (~5s)', movetimeMs: 5000 },
@@ -117,12 +118,12 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     return
   }
 
-  const viewedStatus = !isGame ? await markPositionViewed(position.id, session) : null
+  await (!isGame ? markPositionViewed(position.id, session) : null)
   const nextPositionId = !isGame ? position.next_position_id : null
   const hasSequenceContext = !isGame && hasPositionSequenceContext(positionContext)
   const canAdvanceToNextPosition = !isGame && (Boolean(nextPositionId) || hasSequenceContext)
   const nextActionLabel = nextPositionId ? 'Next Position →' : `Back to ${capitalize(returnView)} →`
-  const backButtonLabel = returnView === 'workout' ? '← Workout' : '← Browse'
+  const backButtonLabel = returnView === 'workout' ? 'All workouts' : '← Browse'
   const initialEngineMoveSpeed = normalizeEngineMoveSpeed(readUserSetting(session, 'engine_move_speed'))
 
   // --- Render layout ---
@@ -136,16 +137,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           </div>
           <div class="play-topbar-actions">
             <div class="account-pill">${accountLabel(session)}</div>
-            ${viewedStatus ? `
-              <span class="viewed-pill" aria-label="Seen on this device">
-                <span class="viewed-pill-icon" aria-hidden="true">✓</span>
-                Seen
-              </span>
-            ` : ''}
             <button id="settings-btn" class="btn-secondary" type="button">Settings</button>
             <button id="hint-btn" class="btn-secondary" ${browseOnly ? 'hidden' : 'disabled'}>Hint</button>
             <button id="restart-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Restart</button>
-            <button id="resign-btn" class="btn-secondary" ${browseOnly ? 'hidden' : ''}>Resign</button>
           </div>
         </div>
         <div id="board-wrap">
@@ -221,13 +215,6 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
             <button class="side-btn ${userColorClass(initialUserColor, 'white')}" data-side="white">White</button>
             <button class="side-btn ${userColorClass(initialUserColor, 'black')}" data-side="black">Black</button>
           </div>
-        </div>
-        <div class="engine-speed-control" ${browseOnly ? 'hidden' : ''}>
-          <label class="engine-speed-label" for="engine-speed-select">Engine speed</label>
-          <select id="engine-speed-select" class="engine-speed-select">
-            ${renderEngineMoveSpeedOptions(initialEngineMoveSpeed)}
-          </select>
-          <p class="engine-speed-help">Lower think time makes Stockfish reply quicker.</p>
         </div>
         <div id="engine-banner" class="engine-banner hidden">Engine unavailable — analysis disabled</div>
       </aside>
@@ -785,14 +772,6 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       statusEl.textContent = 'Could not save'
     }
   })
-  app.querySelector('#engine-speed-select')?.addEventListener('change', event => {
-    engineMoveSpeed = normalizeEngineMoveSpeed(event.target.value)
-    event.target.value = engineMoveSpeed
-    writeEngineMoveSpeedPreference(engineMoveSpeed, session)
-    if (workerReady && engineMoving && currentSearch?.kind === 'engineMove') {
-      requestEngineMove()
-    }
-  })
   app.querySelector('#analysis-lines').addEventListener('click', e => {
     const button = e.target.closest('.analysis-line-btn')
     if (!button || button.disabled || !canSelectAnalysisMove()) return
@@ -822,11 +801,6 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       workout: workoutState,
     })
   }
-
-  // --- Resign ---
-  app.querySelector('#resign-btn').addEventListener('click', () => {
-    if (!gameOver) showResult('You resigned — Engine wins')
-  })
 
   app.querySelector('#restart-btn').addEventListener('click', () => {
     if (!browseOnly) startGame({ replaceUrl: true })
@@ -1465,24 +1439,12 @@ function writeAnalysisVisibilityPreference(hidden, session) {
   })
 }
 
-function writeEngineMoveSpeedPreference(speed, session) {
-  const normalized = normalizeEngineMoveSpeed(speed)
-  void writeUserSettings(session, { engine_move_speed: normalized })
-}
-
 function normalizeEngineMoveSpeed(speed) {
-  return Object.prototype.hasOwnProperty.call(ENGINE_MOVE_SPEEDS, speed) ? speed : 'standard'
+  return Object.prototype.hasOwnProperty.call(ENGINE_MOVE_SPEEDS, speed) ? speed : 'instant'
 }
 
 function engineMoveSpeedConfig(speed) {
   return ENGINE_MOVE_SPEEDS[normalizeEngineMoveSpeed(speed)]
-}
-
-function renderEngineMoveSpeedOptions(selectedSpeed) {
-  const normalized = normalizeEngineMoveSpeed(selectedSpeed)
-  return Object.entries(ENGINE_MOVE_SPEEDS).map(([value, option]) => `
-    <option value="${escapeHtml(value)}" ${value === normalized ? 'selected' : ''}>${escapeHtml(option.label)}</option>
-  `).join('')
 }
 
 function preferredSideFromSession(session) {
@@ -1736,7 +1698,7 @@ function puzzleFeedbackHtml(summary) {
 function puzzleFeedbackHeadline(summary) {
   if (summary.completionMode === 'eval') {
     if (summary.completionReason === 'tracking') {
-      return 'Checking the continuation'
+      return ''
     }
     if (summary.solved) {
       return `Solved in ${summary.matchedPrefixPlies} move${summary.matchedPrefixPlies === 1 ? '' : 's'}`
