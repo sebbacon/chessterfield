@@ -155,6 +155,7 @@ describe('Play view game loop', () => {
 
     const button = app.querySelector('#flag-position-btn')
     expect(button?.textContent).toContain('Problem? Flag this position for review')
+    expect(app.querySelector('#position-review-alert')?.classList.contains('hidden')).toBe(true)
 
     button.click()
     await flush()
@@ -162,9 +163,37 @@ describe('Play view game loop', () => {
     const patchCall = fetchMock.mock.calls.find(([url, options]) => url === '/api/positions/1/' && options?.method === 'PATCH')
     expect(patchCall).toBeTruthy()
     expect(JSON.parse(patchCall[1].body)).toEqual({ possible_bug: true })
-    expect(button?.textContent).toContain('Flagged for review')
-    expect(button?.disabled).toBe(true)
+    expect(app.querySelector('#flag-position-btn')).toBeNull()
     expect(app.querySelector('#flag-position-status')?.textContent).toContain('Saved')
+    expect(app.querySelector('#position-review-alert')?.classList.contains('hidden')).toBe(false)
+    expect(app.querySelector('#position-review-alert')?.textContent).toContain('Flagged for review')
+    expect(app.querySelector('#position-review-alert')?.textContent).toContain('may have a bug or issue')
+  })
+
+  it('shows a prominent alert for positions already flagged for review', async () => {
+    const fetchMock = vi.fn((url) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ authenticated: false, user: null, practice_modes: [] }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 1, name: 'Test', fen: STARTING_FEN, notes: '', tags: [], possible_bug: true, next_position_id: null }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+
+    expect(app.querySelector('#position-review-alert')?.classList.contains('hidden')).toBe(false)
+    expect(app.querySelector('#position-review-alert')?.textContent).toContain('Flagged for review')
+    expect(app.querySelector('#position-review-alert')?.textContent).toContain('may have a bug or issue')
+    expect(app.querySelector('#flag-position-btn')).toBeNull()
   })
 
   it('applies engine bestmove to the board after user move', async () => {

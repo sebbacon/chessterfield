@@ -190,15 +190,25 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
           <div class="tags">${position.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>
           <p class="fen-display">${escapeHtml(position.fen)}</p>
           ${!isGame ? `
+            <div
+              id="position-review-alert"
+              class="position-review-alert${position.possible_bug ? '' : ' hidden'}"
+              role="alert"
+            >
+              <strong>Flagged for review.</strong> This position may have a bug or issue.
+            </div>
+          ` : ''}
+          ${!isGame ? `
             <div class="position-review-actions">
-              <button
-                id="flag-position-btn"
-                class="btn-secondary position-review-btn"
-                type="button"
-                ${position.possible_bug ? 'disabled' : ''}
-              >
-                ${position.possible_bug ? 'Flagged for review' : 'Problem? Flag this position for review'}
-              </button>
+              ${position.possible_bug ? '' : `
+                <button
+                  id="flag-position-btn"
+                  class="btn-secondary position-review-btn"
+                  type="button"
+                >
+                  Problem? Flag this position for review
+                </button>
+              `}
               <span id="flag-position-status" class="position-review-status" aria-live="polite"></span>
             </div>
           ` : ''}
@@ -767,8 +777,9 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
     try {
       position = await updatePosition(position.id, { possible_bug: true })
-      button.textContent = 'Flagged for review'
       statusEl.textContent = 'Saved'
+      app.querySelector('#position-review-alert')?.classList.remove('hidden')
+      button.remove()
     } catch {
       button.disabled = false
       statusEl.textContent = 'Could not save'
