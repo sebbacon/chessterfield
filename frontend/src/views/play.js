@@ -1098,7 +1098,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       })
       showOverlay({
         eyebrow: 'Puzzle solved',
-        text: 'Solved it! The winning eval held after the best reply.',
+        text: 'Solved it! Your move kept the advantage.',
       })
       return
     }
@@ -1725,13 +1725,13 @@ function puzzleFeedbackHtml(summary) {
 function puzzleFeedbackHeadline(summary) {
   if (summary.completionMode === 'eval') {
     if (summary.completionReason === 'tracking') {
-      return 'Checking whether the attack still holds after best reply'
+      return 'Checking the continuation'
     }
     if (summary.solved) {
-      return `Winning eval held after reply in ${summary.matchedPrefixPlies} move${summary.matchedPrefixPlies === 1 ? '' : 's'}`
+      return `Solved in ${summary.matchedPrefixPlies} move${summary.matchedPrefixPlies === 1 ? '' : 's'}`
     }
     if (summary.completionReason === 'eval_drop') {
-      return 'The attack no longer held after best reply'
+      return 'That continuation did not work'
     }
     return ''
   }

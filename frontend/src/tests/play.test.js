@@ -817,10 +817,10 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#practice-summary')?.textContent).toContain('41%')
     expect(app.querySelector('#puzzle-feedback')?.textContent).not.toContain('Target:')
     expect(app.querySelector('#puzzle-feedback')?.textContent).not.toContain('Puzzle Tracking')
-    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 4 moves')
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved in 4 moves')
     expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
     expect(app.querySelector('#result-eyebrow')?.textContent).toContain('Puzzle solved')
-    expect(app.querySelector('#result-text')?.textContent).toContain('Solved it!')
+    expect(app.querySelector('#result-text')?.textContent).toContain('Solved it! Your move kept the advantage.')
   })
 
   it('counts shorter solved lines as successful attempts', async () => {
@@ -1033,7 +1033,7 @@ describe('Play view game loop', () => {
       played_line: ['e2e5'],
       completion_reason: 'winning_eval',
     })
-    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 1 move')
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved in 1 move')
   })
 
   it('solves eval-based puzzles correctly when the user is black', async () => {
@@ -1136,12 +1136,12 @@ describe('Play view game loop', () => {
       completion_reason: 'winning_eval',
       played_line: ['e6d5'],
     })
-    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 1 move')
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved in 1 move')
     expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
     expect(app.querySelector('#result-eyebrow')?.textContent).toContain('Puzzle solved')
   })
 
-  it('counts a softened but still held winning eval as solved after the best reply', async () => {
+  it('counts a softened but still winning continuation as solved', async () => {
     const blackAdvantageFen = '6k1/5R1p/6p1/8/4b1P1/P4R2/1r5P/7K b - - 0 1'
     const fetchMock = vi.fn((url, options) => {
       if (url === '/api/me/') {
@@ -1240,11 +1240,11 @@ describe('Play view game loop', () => {
       completion_reason: 'winning_eval',
       played_line: ['b2f2'],
     })
-    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Winning eval held after reply in 1 move')
+    expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved in 1 move')
     expect(app.querySelector('#result-overlay')?.classList.contains('hidden')).toBe(false)
   })
 
-  it('counts a modest root eval that still holds after best reply as solved', async () => {
+  it('counts a modest root advantage that still converts as solved', async () => {
     const blackAdvantageFen = '6k1/5R1p/6p1/8/4b1P1/P4R2/1r5P/7K b - - 0 1'
     const fetchMock = vi.fn((url, options) => {
       if (url === '/api/me/') {
