@@ -141,6 +141,11 @@ deploy-sprite sprite_name="chessterfield": build sprite-check sshfs-check
 push-sprite-data sprite_name="chessterfield": sprite-check
     ./scripts/push_sprite_data.sh {{sprite_name}}
 
+# Synchronize local positions with a remote Chessterfield instance
+# Usage: POSITION_SYNC_REMOTE_URL=https://example.com POSITION_SYNC_API_KEY=secret just sync-positions [--batch-size 50]
+sync-positions *args:
+    .venv/bin/python manage.py sync_positions {{args}}
+
 # Import games from Lichess (--max-games N to limit)
 import-lichess *args:
     .venv/bin/python manage.py import_lichess {{args}}
