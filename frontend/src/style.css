@@ -782,6 +782,25 @@ body {
   gap: 0.35rem;
 }
 
+.position-review-alert {
+  margin-top: 0.8rem;
+  padding: 0.8rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 184, 77, 0.45);
+  background: rgba(255, 184, 77, 0.14);
+  color: #ffe8bf;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.position-review-alert.hidden {
+  display: none;
+}
+
+.position-review-alert strong {
+  color: #ffd48a;
+}
+
 .position-review-btn {
   width: 100%;
   text-align: center;
