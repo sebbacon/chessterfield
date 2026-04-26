@@ -209,6 +209,24 @@ describe('Play view game loop', () => {
     expect(lastCall?.lastMove).toEqual(['e7', 'e5'])
   })
 
+  it('ignores a stale analysis bestmove after the user move and waits for the engine reply', async () => {
+    await mountPlay(app, navigate, 1, {}, syncState)
+    cgMock = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value
+
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    capturedCgConfig.movable.events.after('e2', 'e4')
+
+    expect(() => {
+      mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+    }).not.toThrow()
+
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 10 seldepth 12 multipv 1 score cp -30 nodes 5000 time 50 pv e7e5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+
+    const lastCall = cgMock.set.mock.calls.at(-1)?.[0]
+    expect(lastCall?.lastMove).toEqual(['e7', 'e5'])
+  })
+
   it('board starts disabled and enables only after engine ready', async () => {
     await mountPlay(app, navigate, 1, {}, syncState)
     const cgMockInstance = vi.mocked(await import('chessground').then(m => m.Chessground)).mock.results.at(-1).value

@@ -371,7 +371,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
 
     if (line.startsWith('bestmove')) {
       const match = line.match(/bestmove\s+([a-h][1-8][a-h][1-8][qrbn]?)/)
-      finalizeSearch(match?.[1] || null)
+      const bestmoveUci = match?.[1] || null
+      if (currentSearch && !shouldAcceptBestmove(currentSearch, bestmoveUci)) {
+        return
+      }
+      finalizeSearch(bestmoveUci)
     }
   }
 
@@ -985,6 +989,14 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     }
   }
 
+  function shouldAcceptBestmove(search, bestmoveUci) {
+    if (!search) return false
+    if (!bestmoveUci) return true
+    if (!isLegalUciMove(search.fen, bestmoveUci)) return false
+    if (search.kind !== 'engineMove') return true
+    return search.fen === chess.fen() && search.ply === viewIndex
+  }
+
   function maybeFreezePuzzleLine(search, record) {
     if (!isTrackedPuzzleAttempt() || puzzleState.expectedLineReady) return
     if (search.ply !== 0) return
@@ -1555,6 +1567,20 @@ function mergePracticeSummary(currentSummary, userState, options = {}) {
 
 function moveToUci(move) {
   return `${move.from}${move.to}${move.promotion || ''}`
+}
+
+function isLegalUciMove(fen, uciMove) {
+  if (!fen || !uciMove || uciMove.length < 4) return false
+  try {
+    const board = new Chess(fen)
+    return Boolean(board.move({
+      from: uciMove.slice(0, 2),
+      to: uciMove.slice(2, 4),
+      promotion: uciMove[4] || undefined,
+    }))
+  } catch {
+    return false
+  }
 }
 
 function determinePuzzleGoal({ fen, pv, userColor, score }) {
