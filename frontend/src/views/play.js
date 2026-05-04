@@ -241,6 +241,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   let currentAttemptId = null
   let attemptClosed = false
   let pendingAttemptClose = null
+  let attemptHintRequested = false
   let puzzleState = createPuzzleState()
   let puzzleSummary = createPuzzleSummary(position)
   let practiceSummary = createPracticeSummary(position)
@@ -787,6 +788,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   // --- Hint ---
   app.querySelector('#hint-btn').addEventListener('click', () => {
     if (!workerReady || !isUserTurn() || gameOver || engineMoving) return
+    attemptHintRequested = true
     hintMode = true
     requestDisplayedAnalysis({ force: true, asHint: true })
   })
@@ -836,6 +838,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
     currentAttemptId = null
     attemptClosed = false
     pendingAttemptClose = null
+    attemptHintRequested = false
     viewIndex = browseOnly
       ? clampPly(initialPlayState.ply, positionHistory.length - 1, positionHistory.length - 1)
       : 0
@@ -1122,6 +1125,11 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
   function buildAttemptClosePayload(result, options = {}) {
     const targetDepthPlies = Number(options.targetDepthOverride ?? puzzleState.targetDepthPlies)
     const matchedPrefixPlies = Number(options.matchedPrefixOverride ?? puzzleState.matchedPrefixPlies)
+    const metadata = {
+      final_fen: chess.fen(),
+      ply: viewIndex,
+    }
+    if (attemptHintRequested) metadata.hint_requested = true
     return {
       result,
       target_depth_plies: targetDepthPlies,
@@ -1131,10 +1139,7 @@ export async function mountPlay(app, navigate, itemId, initialPlayState = {}, sy
       played_line: puzzleState.playedLine,
       completion_reason: options.completionReason || '',
       completed_normally: Boolean(options.completedNormally),
-      metadata: {
-        final_fen: chess.fen(),
-        ply: viewIndex,
-      },
+      metadata,
     }
   }
 

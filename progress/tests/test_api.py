@@ -160,6 +160,7 @@ def test_practice_attempt_lifecycle_updates_user_state(authed_client, user, posi
     assert attempt.result == PracticeAttempt.Result.COMPLETED
     assert attempt.score_delta == 4
     assert attempt.matched_prefix_plies == 4
+    assert attempt.metadata == {'source': 'test', 'line': 'mate'}
     assert attempt.expected_line == ['e2e4', 'g1f3', 'f1c4', 'd2d3']
     assert attempt.played_line == ['e2e4', 'g1f3', 'f1c4', 'd2d3']
     assert state.status == UserPositionState.Status.MASTERED
@@ -217,6 +218,84 @@ def test_practice_attempt_mismatch_updates_prefix_without_solving(authed_client,
     assert state.best_matched_prefix_plies == 1
     assert state.last_matched_prefix_plies == 1
     assert state.solved_count == 0
+
+
+@pytest.mark.django_db
+def test_hinted_solve_caps_mastery_and_preserves_metadata(authed_client, user, position):
+    start_response = authed_client.post(
+        '/api/practice/attempts/',
+        json.dumps({
+            'position_id': position.id,
+            'mode': 'classic',
+            'target_depth_plies': 4,
+            'metadata': {'start_fen': STARTING_FEN, 'tracked_puzzle': True},
+        }),
+        content_type='application/json',
+    )
+    attempt_id = json.loads(start_response.content)['id']
+
+    finish_response = authed_client.patch(
+        f'/api/practice/attempts/{attempt_id}/',
+        json.dumps({
+            'result': 'completed',
+            'matched_prefix_plies': 4,
+            'expected_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+            'played_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+            'completion_reason': 'solved',
+            'completed_normally': True,
+            'metadata': {'hint_requested': True, 'final_fen': STARTING_FEN},
+        }),
+        content_type='application/json',
+    )
+
+    assert finish_response.status_code == 200
+    attempt = PracticeAttempt.objects.get(pk=attempt_id)
+    state = UserPositionState.objects.get(user=user, position=position)
+    assert attempt.metadata == {
+        'start_fen': STARTING_FEN,
+        'tracked_puzzle': True,
+        'hint_requested': True,
+        'final_fen': STARTING_FEN,
+    }
+    assert state.solved_count == 1
+    assert state.mastery_score == 80
+    assert state.status == UserPositionState.Status.REVISION
+
+
+@pytest.mark.django_db
+def test_clean_solve_after_hinted_solve_can_reach_mastered(authed_client, user, position):
+    for metadata in ({'hint_requested': True}, {'hint_requested': False}):
+        start_response = authed_client.post(
+            '/api/practice/attempts/',
+            json.dumps({
+                'position_id': position.id,
+                'mode': 'classic',
+                'target_depth_plies': 4,
+            }),
+            content_type='application/json',
+        )
+        attempt_id = json.loads(start_response.content)['id']
+
+        finish_response = authed_client.patch(
+            f'/api/practice/attempts/{attempt_id}/',
+            json.dumps({
+                'result': 'completed',
+                'matched_prefix_plies': 4,
+                'expected_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+                'played_line': ['e2e4', 'g1f3', 'f1c4', 'd2d3'],
+                'completion_reason': 'solved',
+                'completed_normally': True,
+                'metadata': metadata,
+            }),
+            content_type='application/json',
+        )
+        assert finish_response.status_code == 200
+
+    state = UserPositionState.objects.get(user=user, position=position)
+    assert state.attempt_count == 2
+    assert state.solved_count == 2
+    assert state.mastery_score == 100
+    assert state.status == UserPositionState.Status.MASTERED
 
 
 @pytest.mark.django_db
