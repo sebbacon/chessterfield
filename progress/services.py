@@ -7,6 +7,7 @@ from .models import PracticeAttempt, UserPositionState
 RECENT_ATTEMPT_WINDOW = 5
 PERFECT_RECORD_MIN_ATTEMPTS = 3
 HOMEWORK_MASTERY_THRESHOLD = 85
+HINTED_ATTEMPT_MASTERY_CAP = 80
 
 
 def serialize_position_state(state: UserPositionState | None) -> dict | None:
@@ -136,7 +137,7 @@ def finish_practice_attempt(
     if completed_normally is not None:
         attempt.completed_normally = completed_normally
     if metadata is not None:
-        attempt.metadata = metadata
+        attempt.metadata = merge_attempt_metadata(attempt.metadata, metadata)
     attempt.save(
         update_fields=[
             "result",
@@ -214,11 +215,13 @@ def apply_attempt_rollup(state: UserPositionState) -> None:
     state.best_matched_prefix_plies = max(attempt.matched_prefix_plies for attempt in attempts)
     state.recent_accuracy_score = calculate_recent_accuracy_score(attempts[:RECENT_ATTEMPT_WINDOW])
     state.current_perfect_streak = calculate_current_perfect_streak(attempts)
+    latest_solved_attempt_used_hint = bool(latest_solved_attempt and attempt_used_hint(latest_solved_attempt))
     state.perfect_record = state.attempt_count >= PERFECT_RECORD_MIN_ATTEMPTS and state.solved_count == state.attempt_count
     state.mastery_score = calculate_mastery_score(
         attempt_count=state.attempt_count,
         solved_count=state.solved_count,
         recent_accuracy_score=state.recent_accuracy_score,
+        latest_solved_attempt_used_hint=latest_solved_attempt_used_hint,
     )
     state.needs_homework = (
         not state.perfect_record
@@ -242,6 +245,19 @@ def attempt_is_solved(attempt: PracticeAttempt) -> bool:
     )
 
 
+def attempt_used_hint(attempt: PracticeAttempt) -> bool:
+    return bool((attempt.metadata or {}).get("hint_requested"))
+
+
+def merge_attempt_metadata(existing_metadata: dict | None, new_metadata: dict | None) -> dict:
+    merged = {}
+    if isinstance(existing_metadata, dict):
+        merged.update(existing_metadata)
+    if isinstance(new_metadata, dict):
+        merged.update(new_metadata)
+    return merged
+
+
 def calculate_recent_accuracy_score(attempts: list[PracticeAttempt]) -> int:
     if not attempts:
         return 0
@@ -261,7 +277,13 @@ def calculate_current_perfect_streak(attempts: list[PracticeAttempt]) -> int:
     return streak
 
 
-def calculate_mastery_score(*, attempt_count: int, solved_count: int, recent_accuracy_score: int) -> int:
+def calculate_mastery_score(
+    *,
+    attempt_count: int,
+    solved_count: int,
+    recent_accuracy_score: int,
+    latest_solved_attempt_used_hint: bool = False,
+) -> int:
     if attempt_count <= 0:
         return 0
     solve_rate_score = round(100 * solved_count / attempt_count)
@@ -271,4 +293,7 @@ def calculate_mastery_score(*, attempt_count: int, solved_count: int, recent_acc
         + 0.3 * solve_rate_score
         + 0.2 * confidence_score
     )
+    if latest_solved_attempt_used_hint:
+        mastery_score = min(mastery_score, HINTED_ATTEMPT_MASTERY_CAP)
+
     return round(mastery_score)

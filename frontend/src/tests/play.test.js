@@ -710,4 +710,118 @@ describe('Play view game loop', () => {
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('1')
     expect(app.querySelector('#puzzle-feedback')?.textContent).toContain('Solved the line: 2/2')
   })
+
+  it('marks the attempt payload when the user asked for a hint', async () => {
+    const fetchMock = vi.fn((url, options) => {
+      if (url === '/api/me/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            authenticated: true,
+            user: {
+              id: 7,
+              username: 'player1',
+              display_name: 'Player 1',
+              settings: {
+                preferred_side: 'auto',
+                analysis_visibility: 'visible',
+                engine_move_speed: 'standard',
+                default_library_mode: 'positions',
+              },
+            },
+            practice_modes: [],
+          }),
+        })
+      }
+      if (url === '/api/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: 1,
+            name: 'Mate in 2',
+            fen: STARTING_FEN,
+            notes: '',
+            tags: [],
+            next_position_id: null,
+            score_summary: {
+              attempt_count: 0,
+              solved_count: 0,
+            },
+          }),
+        })
+      }
+      if (url === '/api/progress/positions/1/') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ user_state: { viewed_at: '2026-04-19T10:00:00Z' } }),
+        })
+      }
+      if (url === '/api/practice/attempts/' && options?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ id: 99, mode: 'classic', result: 'active', started_at: '2026-04-19T10:00:00Z', target_depth_plies: 4 }),
+        })
+      }
+      if (url === '/api/practice/attempts/99/' && options?.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            attempt: {
+              id: 99,
+              result: 'completed',
+              score_delta: 2,
+              target_depth_plies: 2,
+              matched_prefix_plies: 2,
+              completion_reason: 'solved',
+              completed_normally: true,
+              expected_line: ['e2e4', 'd1h5'],
+              played_line: ['e2e4', 'd1h5'],
+              finished_at: '2026-04-19T10:05:00Z',
+            },
+            user_state: {
+              status: 'completed',
+              mastery_score: 80,
+              attempt_count: 1,
+              best_score: 2,
+              last_score: 2,
+              best_matched_prefix_plies: 2,
+              last_matched_prefix_plies: 2,
+              solved_count: 1,
+            },
+          }),
+        })
+      }
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await mountPlay(app, navigate, 1, {}, syncState)
+    mockWorker.onmessage({ data: { type: 'ready' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score mate 2 nodes 8000 time 120 pv e2e4 e7e5 d1h5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+
+    app.querySelector('#hint-btn').click()
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score mate 2 nodes 8000 time 120 pv e2e4 e7e5 d1h5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e2e4' } })
+
+    capturedCgConfig.movable.events.after('e2', 'e4')
+    mockWorker.onmessage({ data: { type: 'output', line: 'info depth 18 seldepth 22 multipv 1 score mate 1 nodes 4000 time 100 pv e7e5 d1h5' } })
+    mockWorker.onmessage({ data: { type: 'output', line: 'bestmove e7e5' } })
+
+    capturedCgConfig.movable.events.after('d1', 'h5')
+    await flush()
+
+    const closeCall = fetchMock.mock.calls.find(([url, requestOptions]) => url === '/api/practice/attempts/99/' && requestOptions?.method === 'PATCH')
+    expect(closeCall).toBeTruthy()
+    const [, requestOptions] = closeCall
+    expect(JSON.parse(requestOptions.body)).toMatchObject({
+      result: 'completed',
+      target_depth_plies: 2,
+      matched_prefix_plies: 2,
+      completion_reason: 'solved',
+      metadata: {
+        hint_requested: true,
+      },
+    })
+  })
 })
